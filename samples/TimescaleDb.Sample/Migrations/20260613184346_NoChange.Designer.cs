@@ -12,8 +12,8 @@ using TimescaleDb.Sample;
 namespace TimescaleDb.Sample.Migrations
 {
     [DbContext(typeof(MetricsContext))]
-    [Migration("20260613174307_InitialCreate")]
-    partial class InitialCreate
+    [Migration("20260613184346_NoChange")]
+    partial class NoChange
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -50,8 +50,8 @@ namespace TimescaleDb.Sample.Migrations
                         .HasAnnotation("TimescaleDb:ContinuousAggregate:Query", "SELECT time_bucket(INTERVAL '1 hour', time) AS bucket,\n       device_id,\n       avg(value) AS average\nFROM readings\nGROUP BY 1, 2")
                         .HasAnnotation("TimescaleDb:ContinuousAggregate:WithNoData", true)
                         .HasAnnotation("TimescaleDb:IsContinuousAggregate", true)
-                        .HasAnnotation("TimescaleDb:RefreshPolicy:EndOffset", "1 hour")
-                        .HasAnnotation("TimescaleDb:RefreshPolicy:ScheduleInterval", "1 hour")
+                        .HasAnnotation("TimescaleDb:RefreshPolicy:EndOffset", "01:00:00")
+                        .HasAnnotation("TimescaleDb:RefreshPolicy:ScheduleInterval", "01:00:00")
                         .HasAnnotation("TimescaleDb:RefreshPolicy:StartOffset", "3 days");
                 });
 

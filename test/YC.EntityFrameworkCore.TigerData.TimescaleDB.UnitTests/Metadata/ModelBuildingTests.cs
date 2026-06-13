@@ -1,3 +1,4 @@
+using YC.EntityFrameworkCore.TigerData.TimescaleDB;
 using Microsoft.EntityFrameworkCore;
 using YC.EntityFrameworkCore.TigerData.TimescaleDB.Metadata;
 using YC.EntityFrameworkCore.TigerData.TimescaleDB.UnitTests.TestUtilities;
@@ -14,18 +15,16 @@ public class ModelBuildingTests
         public double Value { get; set; }
     }
 
-    [Hypertable(ChunkIntervalDays = 1)]
-    [Columnstore]
-    [ColumnstorePolicy(AfterDays = 7)]
-    [RetentionPolicy(DropAfterDays = 90, ScheduleIntervalHours = 12)]
+    [Columnstore(CompressAfter = 7, CompressAfterUnit = Every.Day)]
+    [Retention(90, Every.Day, ScheduleInterval = 12, ScheduleIntervalUnit = Every.Hour)]
     private class AttributedReading
     {
-        [HypertablePartition]
-        [ColumnstoreOrderBy(Descending = true)]
+        [PartitionColumn(1, Every.Day)]
+        [OrderBy(0, Sort.Descending)]
         public DateTime Time { get; set; }
 
         [SpacePartition(4)]
-        [ColumnstoreSegmentBy]
+        [SegmentBy]
         public string DeviceId { get; set; } = null!;
 
         public double Value { get; set; }
@@ -44,8 +43,8 @@ public class ModelBuildingTests
         var model = TimescaleDbModelBuilder.Build(mb => mb.Entity<Reading>(e =>
         {
             e.HasKey(x => new { x.Id, x.Time });
-            e.IsHypertable(x => x.Time, chunkInterval: "1 day");
-            e.HasColumnstore(segmentBy: "DeviceId", orderBy: "Time DESC");
+            e.IsHypertable(x => x.Time, chunkInterval: TimeSpan.FromDays(1));
+            e.HasColumnstore(cs => cs.SegmentBy(x => x.DeviceId).OrderByDescending(x => x.Time));
         }));
 
         var entity = model.FindEntityType(typeof(Reading))!;
@@ -72,7 +71,7 @@ public class ModelBuildingTests
         Assert.Equal("7 days", entity.FindAnnotation(TimescaleDbAnnotationNames.ColumnstorePolicyAfter)?.Value);
         Assert.Equal("90 days", entity.FindAnnotation(TimescaleDbAnnotationNames.RetentionPolicyDropAfter)?.Value);
         Assert.Equal(
-            "12:00:00", entity.FindAnnotation(TimescaleDbAnnotationNames.RetentionPolicyScheduleInterval)?.Value);
+            "12 hours", entity.FindAnnotation(TimescaleDbAnnotationNames.RetentionPolicyScheduleInterval)?.Value);
         Assert.Equal(true, entity.FindAnnotation(TimescaleDbAnnotationNames.ColumnstoreEnabled)?.Value);
         Assert.Equal("DeviceId", entity.FindAnnotation(TimescaleDbAnnotationNames.ColumnstoreSegmentBy)?.Value);
         Assert.Equal("Time DESC", entity.FindAnnotation(TimescaleDbAnnotationNames.ColumnstoreOrderBy)?.Value);
@@ -87,7 +86,7 @@ public class ModelBuildingTests
             e.Property(x => x.Time).HasColumnName("time");
             e.Property(x => x.DeviceId).HasColumnName("device_id");
             e.IsHypertable(x => x.Time);
-            e.HasColumnstore(segmentBy: "DeviceId", orderBy: "Time DESC");
+            e.HasColumnstore(cs => cs.SegmentBy(x => x.DeviceId).OrderByDescending(x => x.Time));
         }));
 
         var entity = model.FindEntityType(typeof(Reading))!;
@@ -119,7 +118,7 @@ public class ModelBuildingTests
             {
                 e.HasNoKey();
                 e.IsHypertable(x => x.Time);
-                e.HasColumnstorePolicy(after: "7 days");
+                e.HasColumnstorePolicy(7, Every.Day);
             })));
 
         Assert.Contains("columnstore", exception.Message, StringComparison.OrdinalIgnoreCase);
@@ -132,7 +131,7 @@ public class ModelBuildingTests
             TimescaleDbModelBuilder.Build(mb => mb.Entity<Reading>(e =>
             {
                 e.HasNoKey();
-                e.HasRetentionPolicy(dropAfter: "90 days");
+                e.HasRetentionPolicy(90, Every.Day);
             })));
 
         Assert.Contains("retention", exception.Message, StringComparison.OrdinalIgnoreCase);
@@ -155,7 +154,7 @@ public class ModelBuildingTests
                     "hourly_avg",
                     "SELECT time_bucket('1 hour', \"Time\") AS \"Bucket\", \"DeviceId\", avg(\"Value\") AS \"Avg\" "
                     + "FROM \"Reading\" GROUP BY 1, 2");
-                e.HasRefreshPolicy(startOffset: "3 days", endOffset: "1 hour");
+                e.HasRefreshPolicy(TimeSpan.FromDays(3), TimeSpan.FromHours(1));
             });
         });
 
@@ -197,7 +196,7 @@ public class ModelBuildingTests
     public void Jobs_are_stored_on_the_model()
     {
         var model = TimescaleDbModelBuilder.Build(mb =>
-            mb.HasTimescaleDbJob("nightly_cleanup", "public.cleanup", scheduleInterval: "1 day"));
+            mb.HasTimescaleDbJob("nightly_cleanup", "public.cleanup", scheduleInterval: TimeSpan.FromDays(1)));
 
         var jobs = TimescaleDbJob.Deserialize(
             model.FindAnnotation(TimescaleDbAnnotationNames.Jobs)?.Value as string);

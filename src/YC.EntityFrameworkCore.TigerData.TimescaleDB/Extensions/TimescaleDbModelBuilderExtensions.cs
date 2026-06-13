@@ -1,3 +1,5 @@
+using YC.EntityFrameworkCore.TigerData.TimescaleDB;
+using YC.EntityFrameworkCore.TigerData.TimescaleDB.Internal;
 using YC.EntityFrameworkCore.TigerData.TimescaleDB.Metadata;
 
 // ReSharper disable once CheckNamespace
@@ -14,19 +16,19 @@ public static class TimescaleDbModelBuilderExtensions
     /// </summary>
     /// <param name="name">Unique job name (used as the job's <c>application_name</c>).</param>
     /// <param name="procedure">Procedure or function to run, e.g. <c>"public.refresh_stats"</c>.</param>
-    /// <param name="scheduleInterval">How often the job runs, e.g. <c>"1 hour"</c>. TimescaleDB default: 24 hours.</param>
+    /// <param name="scheduleInterval">How often the job runs. TimescaleDB default: 24 hours.</param>
     /// <param name="config">JSONB configuration passed to the procedure.</param>
     /// <param name="fixedSchedule">Fixed cadence (TimescaleDB default: true) vs. sliding interval.</param>
-    /// <param name="initialStart">First execution time (ISO-8601 timestamptz literal).</param>
-    /// <param name="timezone">Time zone for fixed schedules. TimescaleDB default: UTC.</param>
+    /// <param name="initialStart">First execution time.</param>
+    /// <param name="timezone">Time zone identifier for fixed schedules. TimescaleDB default: UTC.</param>
     public static ModelBuilder HasTimescaleDbJob(
         this ModelBuilder modelBuilder,
         string name,
         string procedure,
-        string? scheduleInterval = null,
+        TimeSpan? scheduleInterval = null,
         string? config = null,
         bool? fixedSchedule = null,
-        string? initialStart = null,
+        DateTimeOffset? initialStart = null,
         string? timezone = null)
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
@@ -42,10 +44,10 @@ public static class TimescaleDbModelBuilderExtensions
         {
             Name = name,
             Procedure = procedure,
-            ScheduleInterval = scheduleInterval,
+            ScheduleInterval = scheduleInterval is { } s ? PgInterval.Format(s) : null,
             Config = config,
             FixedSchedule = fixedSchedule,
-            InitialStart = initialStart,
+            InitialStart = initialStart?.ToString("O"),
             Timezone = timezone,
         });
 

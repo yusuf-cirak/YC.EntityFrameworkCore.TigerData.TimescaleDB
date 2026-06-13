@@ -3,7 +3,6 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.EntityFrameworkCore.Query;
 using YC.EntityFrameworkCore.TigerData.TimescaleDB.Metadata;
 using YC.EntityFrameworkCore.TigerData.TimescaleDB.Metadata.Conventions;
@@ -36,7 +35,6 @@ public static class TimescaleDbServiceCollectionExtensions
         services.Replace(ServiceDescriptor.Scoped<IMigrationsSqlGenerator, TimescaleDbMigrationsSqlGenerator>());
         services.Replace(ServiceDescriptor.Scoped<IMigrationsModelDiffer, TimescaleDbMigrationsModelDiffer>());
         services.Replace(ServiceDescriptor.Singleton<IRelationalAnnotationProvider, TimescaleDbAnnotationProvider>());
-        services.Replace(ServiceDescriptor.Singleton<IAnnotationCodeGenerator, TimescaleDbAnnotationCodeGenerator>());
 
         return services;
     }

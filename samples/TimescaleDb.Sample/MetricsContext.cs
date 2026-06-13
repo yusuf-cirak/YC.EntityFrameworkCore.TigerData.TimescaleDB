@@ -3,17 +3,15 @@ using YC.EntityFrameworkCore.TigerData.TimescaleDB;
 
 namespace TimescaleDb.Sample;
 
-[Hypertable(ChunkIntervalDays = 1)]
-[Columnstore]
-[ColumnstorePolicy(AfterDays = 7)]
-[RetentionPolicy(DropAfterDays = 90)]
+[Columnstore(CompressAfter = 7, CompressAfterUnit = Every.Day)]
+[Retention(90, Every.Day)]
 public class Reading
 {
-    [HypertablePartition]
-    [ColumnstoreOrderBy(Descending = true)]
+    [PartitionColumn(1, Every.Day)]
+    [OrderBy(0, Sort.Descending)]
     public DateTime Time { get; set; }
 
-    [ColumnstoreSegmentBy]
+    [SegmentBy]
     public string DeviceId { get; set; } = null!;
 
     public double Value { get; set; }
@@ -63,12 +61,15 @@ public class MetricsContext : DbContext
                 FROM readings
                 GROUP BY 1, 2
                 """);
-            e.HasRefreshPolicy(startOffset: "3 days", endOffset: "1 hour", scheduleInterval: "1 hour");
+            e.HasRefreshPolicy(
+                startOffset: TimeSpan.FromDays(3),
+                endOffset: TimeSpan.FromHours(1),
+                scheduleInterval: TimeSpan.FromHours(1));
         });
 
         modelBuilder.HasTimescaleDbJob(
             "sample_noop_job",
             "public.sample_noop",
-            scheduleInterval: "1 day");
+            scheduleInterval: TimeSpan.FromDays(1));
     }
 }

@@ -1,3 +1,4 @@
+using YC.EntityFrameworkCore.TigerData.TimescaleDB;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using YC.EntityFrameworkCore.TigerData.TimescaleDB.UnitTests.TestUtilities;
@@ -24,7 +25,7 @@ public class TransitionMatrixTests
         => mb => mb.Entity<Reading>(e =>
         {
             Configure()(e);
-            e.IsHypertable(x => x.Time, chunkInterval: "1 day");
+            e.IsHypertable(x => x.Time, chunkInterval: TimeSpan.FromDays(1));
             extra?.Invoke(e);
         });
 
@@ -55,7 +56,7 @@ public class TransitionMatrixTests
         Action<ModelBuilder> wider = mb => mb.Entity<Reading>(e =>
         {
             Configure()(e);
-            e.IsHypertable(x => x.Time, chunkInterval: "7 days");
+            e.IsHypertable(x => x.Time, chunkInterval: TimeSpan.FromDays(7));
         });
 
         var sql = MigrationSqlHelper.GenerateSql(Hypertable(), wider);
@@ -115,7 +116,7 @@ public class TransitionMatrixTests
     public void Removing_retention_policy_emits_remove()
     {
         var sql = MigrationSqlHelper.GenerateSql(
-            Hypertable(e => e.HasRetentionPolicy(dropAfter: "90 days")),
+            Hypertable(e => e.HasRetentionPolicy(90, Every.Day)),
             Hypertable());
 
         Assert.Contains(sql, s => s.Contains("SELECT remove_retention_policy('\"readings\"', if_exists => true);"));
@@ -192,11 +193,11 @@ public class TransitionMatrixTests
         var full = (Action<ModelBuilder>)(mb => mb.Entity<Reading>(e =>
         {
             Configure()(e);
-            e.IsHypertable(x => x.Time, chunkInterval: "1 day");
+            e.IsHypertable(x => x.Time, chunkInterval: TimeSpan.FromDays(1));
             e.HasSpacePartition(x => x.DeviceId, partitions: 4);
             e.HasColumnstore(cs => cs.SegmentBy(x => x.DeviceId).OrderByDescending(x => x.Time));
-            e.HasColumnstorePolicy(after: "7 days");
-            e.HasRetentionPolicy(dropAfter: "90 days");
+            e.HasColumnstorePolicy(7, Every.Day);
+            e.HasRetentionPolicy(90, Every.Day);
         }));
 
         var sql = MigrationSqlHelper.GenerateSql(full, full);

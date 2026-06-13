@@ -1,48 +1,65 @@
 namespace YC.EntityFrameworkCore.TigerData.TimescaleDB;
 
 /// <summary>
-///     Enables the TimescaleDB columnstore (compression) on the hypertable. Configure the
-///     layout with <see cref="ColumnstoreSegmentByAttribute" /> and
-///     <see cref="ColumnstoreOrderByAttribute" /> on the properties themselves.
+///     Enables the TimescaleDB columnstore (compression) on the hypertable and, optionally, its
+///     automatic conversion policy and chunk merging. The columnstore is also enabled implicitly
+///     by any <see cref="SegmentByAttribute" /> / <see cref="OrderByAttribute" /> on a property.
+///     Requires a <see cref="PartitionColumnAttribute" /> on the class.
 /// </summary>
-/// <remarks>Equivalent to the <c>HasColumnstore()</c> Fluent API.</remarks>
+/// <remarks>Equivalent to the <c>HasColumnstore(...)</c> / <c>HasColumnstorePolicy(...)</c> Fluent API.</remarks>
 [AttributeUsage(AttributeTargets.Class)]
 public sealed class ColumnstoreAttribute : Attribute
 {
-    /// <summary>Merge chunks up to this many days when compressing (<c>timescaledb.compress_chunk_time_interval</c>).</summary>
-    public int ChunkMergeIntervalDays { get; set; }
+    /// <summary>
+    ///     Age after which chunks are converted to columnstore (with <see cref="CompressAfterUnit" />).
+    ///     Set to add an <c>add_columnstore_policy</c>. <c>0</c> adds no policy.
+    /// </summary>
+    public long CompressAfter { get; set; }
 
-    /// <summary>Raw-interval variant of <see cref="ChunkMergeIntervalDays" />, e.g. <c>"1 month"</c>.</summary>
-    public string? ChunkMergeInterval { get; set; }
+    /// <summary>Unit of <see cref="CompressAfter" />.</summary>
+    public Every CompressAfterUnit { get; set; } = Every.Day;
+
+    /// <summary>How often the policy job runs (with <see cref="ScheduleIntervalUnit" />). <c>0</c> uses the default.</summary>
+    public long ScheduleInterval { get; set; }
+
+    /// <summary>Unit of <see cref="ScheduleInterval" />.</summary>
+    public Every ScheduleIntervalUnit { get; set; } = Every.Hour;
+
+    /// <summary>Merge chunks up to this span when compressing (with <see cref="MergeChunksUnit" />). <c>0</c> = none.</summary>
+    public long MergeChunks { get; set; }
+
+    /// <summary>Unit of <see cref="MergeChunks" />.</summary>
+    public Every MergeChunksUnit { get; set; } = Every.Day;
 }
 
-/// <summary>Includes this property's column in <c>timescaledb.segmentby</c>.</summary>
+/// <summary>Includes this property's column in the columnstore <c>segmentby</c> list.</summary>
 [AttributeUsage(AttributeTargets.Property)]
-public sealed class ColumnstoreSegmentByAttribute : Attribute
+public sealed class SegmentByAttribute : Attribute
 {
     /// <param name="order">Position among the segment-by columns (0-based).</param>
-    public ColumnstoreSegmentByAttribute(int order = 0)
+    public SegmentByAttribute(int order = 0)
         => Order = order;
 
     public int Order { get; }
 }
 
-/// <summary>Includes this property's column in <c>timescaledb.orderby</c>.</summary>
+/// <summary>Includes this property's column in the columnstore <c>orderby</c> list.</summary>
 [AttributeUsage(AttributeTargets.Property)]
-public sealed class ColumnstoreOrderByAttribute : Attribute
+public sealed class OrderByAttribute : Attribute
 {
     /// <param name="order">Position among the order-by columns (0-based).</param>
-    public ColumnstoreOrderByAttribute(int order = 0)
-        => Order = order;
+    /// <param name="direction">Sort direction.</param>
+    /// <param name="nulls">NULL ordering.</param>
+    public OrderByAttribute(int order = 0, Sort direction = Sort.Ascending, Nulls nulls = Nulls.Default)
+    {
+        Order = order;
+        Direction = direction;
+        Nulls = nulls;
+    }
 
     public int Order { get; }
 
-    /// <summary>Sort direction; ascending when false (default).</summary>
-    public bool Descending { get; set; }
+    public Sort Direction { get; }
 
-    /// <summary>Place NULLs first. Mutually exclusive with <see cref="NullsLast" />.</summary>
-    public bool NullsFirst { get; set; }
-
-    /// <summary>Place NULLs last. Mutually exclusive with <see cref="NullsFirst" />.</summary>
-    public bool NullsLast { get; set; }
+    public Nulls Nulls { get; }
 }

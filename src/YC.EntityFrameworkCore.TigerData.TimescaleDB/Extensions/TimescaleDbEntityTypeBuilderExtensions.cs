@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using YC.EntityFrameworkCore.TigerData.TimescaleDB;
 using YC.EntityFrameworkCore.TigerData.TimescaleDB.Internal;
 using YC.EntityFrameworkCore.TigerData.TimescaleDB.Metadata;
 using YC.EntityFrameworkCore.TigerData.TimescaleDB.Metadata.Builders;
@@ -8,54 +9,52 @@ using YC.EntityFrameworkCore.TigerData.TimescaleDB.Metadata.Builders;
 namespace Microsoft.EntityFrameworkCore;
 
 /// <summary>
-///     TimescaleDB Fluent API for entity types: hypertables, columnstore,
-///     policies and continuous aggregates.
+///     TimescaleDB Fluent API for entity types. Intervals are expressed with <see cref="TimeSpan" />
+///     or a <c>(value, <see cref="Every" />)</c> pair — never a raw string. The only strings are
+///     genuine database references (an integer-now function name, a continuous-aggregate query, a
+///     time-zone identifier).
 /// </summary>
 public static class TimescaleDbEntityTypeBuilderExtensions
 {
     // ---------------------------------------------------------------- hypertable
 
-    /// <summary>
-    ///     Maps the entity's table to a TimescaleDB hypertable partitioned by the given property.
-    /// </summary>
-    /// <param name="partitionColumn">The range partition (time) property.</param>
-    /// <param name="chunkInterval">Chunk interval. TimescaleDB default: 7 days.</param>
-    /// <param name="createDefaultIndexes">
-    ///     Whether TimescaleDB creates its default index on the partition column. TimescaleDB default: true.
-    /// </param>
+    /// <summary>Maps the entity to a hypertable partitioned by the given time property.</summary>
+    /// <param name="chunkInterval">Chunk interval; TimescaleDB default (7 days) when null.</param>
     public static EntityTypeBuilder<TEntity> IsHypertable<TEntity>(
         this EntityTypeBuilder<TEntity> entityTypeBuilder,
         Expression<Func<TEntity, object?>> partitionColumn,
         TimeSpan? chunkInterval = null,
         bool? createDefaultIndexes = null)
         where TEntity : class
-        => (EntityTypeBuilder<TEntity>)((EntityTypeBuilder)entityTypeBuilder).IsHypertable(
+        => ApplyHypertable(
+            entityTypeBuilder,
             ExpressionHelpers.GetPropertyName(partitionColumn),
             chunkInterval is { } interval ? PgInterval.Format(interval) : null,
             createDefaultIndexes);
 
-    /// <summary>
-    ///     Maps to a hypertable with a raw PostgreSQL chunk interval for calendar units a
-    ///     <see cref="TimeSpan" /> cannot express, e.g. <c>"1 month"</c>.
-    /// </summary>
+    /// <summary>Maps the entity to a hypertable with a <c>(value, unit)</c> chunk interval.</summary>
     public static EntityTypeBuilder<TEntity> IsHypertable<TEntity>(
         this EntityTypeBuilder<TEntity> entityTypeBuilder,
         Expression<Func<TEntity, object?>> partitionColumn,
-        string chunkInterval,
+        int chunkInterval,
+        Every chunkUnit,
         bool? createDefaultIndexes = null)
         where TEntity : class
-        => (EntityTypeBuilder<TEntity>)((EntityTypeBuilder)entityTypeBuilder).IsHypertable(
-            ExpressionHelpers.GetPropertyName(partitionColumn), chunkInterval, createDefaultIndexes);
+        => ApplyHypertable(
+            entityTypeBuilder,
+            ExpressionHelpers.GetPropertyName(partitionColumn),
+            PgInterval.Format(chunkInterval, chunkUnit),
+            createDefaultIndexes);
 
     /// <summary>
-    ///     Maps to a hypertable partitioned by an integer column, with the chunk interval given
-    ///     in the column's own unit (e.g. microseconds for a microsecond-epoch column).
+    ///     Maps the entity to a hypertable partitioned by an integer column. The chunk interval is
+    ///     the raw size in the column's own unit (e.g. microseconds).
     /// </summary>
     /// <param name="integerNowFunction">
     ///     A STABLE SQL function returning the current time in the column's unit
     ///     (<c>set_integer_now_func</c>); required when policies are configured.
     /// </param>
-    public static EntityTypeBuilder<TEntity> IsHypertable<TEntity>(
+    public static EntityTypeBuilder<TEntity> IsHypertableByInteger<TEntity>(
         this EntityTypeBuilder<TEntity> entityTypeBuilder,
         Expression<Func<TEntity, object?>> partitionColumn,
         long chunkInterval,
@@ -63,123 +62,66 @@ public static class TimescaleDbEntityTypeBuilderExtensions
         bool? createDefaultIndexes = null)
         where TEntity : class
     {
-        var builder = ((EntityTypeBuilder)entityTypeBuilder).IsHypertable(
+        ApplyHypertable(
+            entityTypeBuilder,
             ExpressionHelpers.GetPropertyName(partitionColumn),
             chunkInterval.ToString(System.Globalization.CultureInfo.InvariantCulture),
             createDefaultIndexes);
 
         if (integerNowFunction is not null)
         {
-            builder.HasAnnotation(TimescaleDbAnnotationNames.IntegerNowFunction, integerNowFunction);
-        }
-
-        return (EntityTypeBuilder<TEntity>)builder;
-    }
-
-    /// <summary>Non-generic / name-based variant of <c>IsHypertable</c>.</summary>
-    public static EntityTypeBuilder IsHypertable(
-        this EntityTypeBuilder entityTypeBuilder,
-        string partitionColumn,
-        string? chunkInterval = null,
-        bool? createDefaultIndexes = null)
-    {
-        ArgumentNullException.ThrowIfNull(entityTypeBuilder);
-        ArgumentException.ThrowIfNullOrWhiteSpace(partitionColumn);
-
-        entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.IsHypertable, true);
-        entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.PartitionColumn, partitionColumn);
-
-        if (chunkInterval is not null)
-        {
-            entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.ChunkInterval, chunkInterval);
-        }
-
-        if (createDefaultIndexes is not null)
-        {
-            entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.CreateDefaultIndexes, createDefaultIndexes);
+            entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.IntegerNowFunction, integerNowFunction);
         }
 
         return entityTypeBuilder;
     }
 
-    /// <summary>
-    ///     Registers the integer-now function for an integer-time hypertable
-    ///     (<c>set_integer_now_func</c>).
-    /// </summary>
-    public static EntityTypeBuilder HasIntegerNowFunction(
-        this EntityTypeBuilder entityTypeBuilder,
-        string functionName)
-    {
-        ArgumentNullException.ThrowIfNull(entityTypeBuilder);
-        ArgumentException.ThrowIfNullOrWhiteSpace(functionName);
-
-        entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.IntegerNowFunction, functionName);
-        return entityTypeBuilder;
-    }
-
-    /// <inheritdoc cref="HasIntegerNowFunction(EntityTypeBuilder, string)" />
+    /// <summary>Registers the integer-now function of an integer-time hypertable.</summary>
     public static EntityTypeBuilder<TEntity> HasIntegerNowFunction<TEntity>(
         this EntityTypeBuilder<TEntity> entityTypeBuilder,
         string functionName)
         where TEntity : class
-        => (EntityTypeBuilder<TEntity>)((EntityTypeBuilder)entityTypeBuilder)
-            .HasIntegerNowFunction(functionName);
+    {
+        ArgumentNullException.ThrowIfNull(entityTypeBuilder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(functionName);
+        entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.IntegerNowFunction, functionName);
+        return entityTypeBuilder;
+    }
 
-    /// <summary>
-    ///     Adds a hash (space) partition dimension to the hypertable
-    ///     (<c>add_dimension(..., by_hash(...))</c>).
-    /// </summary>
+    /// <summary>Adds a hash (space) partition dimension on the given column.</summary>
     public static EntityTypeBuilder<TEntity> HasSpacePartition<TEntity>(
         this EntityTypeBuilder<TEntity> entityTypeBuilder,
         Expression<Func<TEntity, object?>> column,
         int partitions)
         where TEntity : class
-        => (EntityTypeBuilder<TEntity>)((EntityTypeBuilder)entityTypeBuilder)
-            .HasSpacePartition(ExpressionHelpers.GetPropertyName(column), partitions);
-
-    /// <summary>Non-generic / name-based variant of <c>HasSpacePartition</c>.</summary>
-    public static EntityTypeBuilder HasSpacePartition(
-        this EntityTypeBuilder entityTypeBuilder,
-        string column,
-        int partitions)
     {
         ArgumentNullException.ThrowIfNull(entityTypeBuilder);
-        ArgumentException.ThrowIfNullOrWhiteSpace(column);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(partitions, 0);
 
-        entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.SpacePartitionColumn, column);
+        entityTypeBuilder.HasAnnotation(
+            TimescaleDbAnnotationNames.SpacePartitionColumn, ExpressionHelpers.GetPropertyName(column));
         entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.SpacePartitions, partitions);
         return entityTypeBuilder;
     }
 
-    /// <summary>
-    ///     Enables chunk skipping (min/max range tracking) on the given column
-    ///     (<c>enable_chunk_skipping</c>).
-    /// </summary>
+    /// <summary>Enables chunk skipping (min/max range tracking) on the given column.</summary>
     public static EntityTypeBuilder<TEntity> HasChunkSkipping<TEntity>(
         this EntityTypeBuilder<TEntity> entityTypeBuilder,
         Expression<Func<TEntity, object?>> column)
         where TEntity : class
-        => (EntityTypeBuilder<TEntity>)((EntityTypeBuilder)entityTypeBuilder)
-            .HasChunkSkipping(ExpressionHelpers.GetPropertyName(column));
-
-    /// <summary>Non-generic / name-based variant of <c>HasChunkSkipping</c>.</summary>
-    public static EntityTypeBuilder HasChunkSkipping(
-        this EntityTypeBuilder entityTypeBuilder,
-        string column)
     {
         ArgumentNullException.ThrowIfNull(entityTypeBuilder);
-        ArgumentException.ThrowIfNullOrWhiteSpace(column);
 
+        var name = ExpressionHelpers.GetPropertyName(column);
         var existing = entityTypeBuilder.Metadata
             .FindAnnotation(TimescaleDbAnnotationNames.ChunkSkippingColumns)?.Value as string;
 
         var columns = existing is null
-            ? column
+            ? name
             : string.Join(", ", existing
                 .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-                .Where(c => c != column)
-                .Append(column));
+                .Where(c => c != name)
+                .Append(name));
 
         entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.ChunkSkippingColumns, columns);
         return entityTypeBuilder;
@@ -188,12 +130,8 @@ public static class TimescaleDbEntityTypeBuilderExtensions
     // ---------------------------------------------------------------- columnstore
 
     /// <summary>
-    ///     Enables the TimescaleDB columnstore (compression) with type-safe configuration:
-    ///     <code>
-    ///     e.HasColumnstore(cs => cs
-    ///         .SegmentBy(x => x.DeviceId)
-    ///         .OrderByDescending(x => x.Time));
-    ///     </code>
+    ///     Enables the TimescaleDB columnstore with type-safe configuration:
+    ///     <code>e.HasColumnstore(cs => cs.SegmentBy(x =&gt; x.DeviceId).OrderByDescending(x =&gt; x.Time));</code>
     /// </summary>
     public static EntityTypeBuilder<TEntity> HasColumnstore<TEntity>(
         this EntityTypeBuilder<TEntity> entityTypeBuilder,
@@ -201,42 +139,12 @@ public static class TimescaleDbEntityTypeBuilderExtensions
         where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(entityTypeBuilder);
-
         entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.ColumnstoreEnabled, true);
         configure?.Invoke(new TimescaleDbColumnstoreBuilder<TEntity>(entityTypeBuilder));
         return entityTypeBuilder;
     }
 
-    /// <summary>Non-generic / name-based variant of <c>HasColumnstore</c>.</summary>
-    public static EntityTypeBuilder HasColumnstore(
-        this EntityTypeBuilder entityTypeBuilder,
-        string? segmentBy = null,
-        string? orderBy = null)
-    {
-        ArgumentNullException.ThrowIfNull(entityTypeBuilder);
-
-        entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.ColumnstoreEnabled, true);
-
-        if (segmentBy is not null)
-        {
-            entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.ColumnstoreSegmentBy, segmentBy);
-        }
-
-        if (orderBy is not null)
-        {
-            entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.ColumnstoreOrderBy, orderBy);
-        }
-
-        return entityTypeBuilder;
-    }
-
-    /// <summary>
-    ///     Adds an automatic columnstore conversion policy (<c>add_columnstore_policy</c>).
-    /// </summary>
-    /// <param name="after">Chunks older than this are converted.</param>
-    /// <param name="scheduleInterval">How often the policy job runs. TimescaleDB default: derived from the chunk interval.</param>
-    /// <param name="initialStart">First run of the policy job.</param>
-    /// <param name="timezone">Time zone for the schedule. TimescaleDB default: UTC.</param>
+    /// <summary>Adds an automatic columnstore conversion policy (<c>add_columnstore_policy</c>).</summary>
     public static EntityTypeBuilder<TEntity> HasColumnstorePolicy<TEntity>(
         this EntityTypeBuilder<TEntity> entityTypeBuilder,
         TimeSpan after,
@@ -244,37 +152,38 @@ public static class TimescaleDbEntityTypeBuilderExtensions
         DateTimeOffset? initialStart = null,
         string? timezone = null)
         where TEntity : class
-        => (EntityTypeBuilder<TEntity>)((EntityTypeBuilder)entityTypeBuilder).HasColumnstorePolicy(
-            PgInterval.Format(after),
-            scheduleInterval is { } schedule ? PgInterval.Format(schedule) : null,
-            initialStart,
-            timezone);
+        => ApplyColumnstorePolicy(
+            entityTypeBuilder, PgInterval.Format(after),
+            scheduleInterval is { } s ? PgInterval.Format(s) : null, initialStart, timezone);
 
-    /// <summary>Raw-interval variant of <c>HasColumnstorePolicy</c> (e.g. <c>"1 month"</c>).</summary>
-    public static EntityTypeBuilder HasColumnstorePolicy(
-        this EntityTypeBuilder entityTypeBuilder,
-        string after,
-        string? scheduleInterval = null,
+    /// <inheritdoc cref="HasColumnstorePolicy{TEntity}(EntityTypeBuilder{TEntity}, TimeSpan, TimeSpan?, DateTimeOffset?, string?)" />
+    public static EntityTypeBuilder<TEntity> HasColumnstorePolicy<TEntity>(
+        this EntityTypeBuilder<TEntity> entityTypeBuilder,
+        int after,
+        Every unit,
         DateTimeOffset? initialStart = null,
         string? timezone = null)
-    {
-        ArgumentNullException.ThrowIfNull(entityTypeBuilder);
-        ArgumentException.ThrowIfNullOrWhiteSpace(after);
+        where TEntity : class
+        => ApplyColumnstorePolicy(
+            entityTypeBuilder, PgInterval.Format(after, unit), null, initialStart, timezone);
 
-        entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.ColumnstorePolicyAfter, after);
-        SetIfNotNull(entityTypeBuilder, TimescaleDbAnnotationNames.ColumnstorePolicyScheduleInterval, scheduleInterval);
-        SetIfNotNull(entityTypeBuilder, TimescaleDbAnnotationNames.ColumnstorePolicyInitialStart,
-            initialStart?.ToString("O"));
-        SetIfNotNull(entityTypeBuilder, TimescaleDbAnnotationNames.ColumnstorePolicyTimezone, timezone);
-        return entityTypeBuilder;
-    }
+    /// <summary>
+    ///     Adds a columnstore policy to an integer-partitioned hypertable, with <paramref name="after" />
+    ///     expressed as a raw value in the partition column's own unit.
+    /// </summary>
+    public static EntityTypeBuilder<TEntity> HasColumnstorePolicy<TEntity>(
+        this EntityTypeBuilder<TEntity> entityTypeBuilder,
+        long after,
+        DateTimeOffset? initialStart = null,
+        string? timezone = null)
+        where TEntity : class
+        => ApplyColumnstorePolicy(
+            entityTypeBuilder, after.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            null, initialStart, timezone);
 
     // ---------------------------------------------------------------- retention / reorder
 
-    /// <summary>
-    ///     Adds a data retention policy (<c>add_retention_policy</c>); applies to hypertables
-    ///     and continuous aggregates.
-    /// </summary>
+    /// <summary>Adds a data retention policy (hypertable or continuous aggregate).</summary>
     public static EntityTypeBuilder<TEntity> HasRetentionPolicy<TEntity>(
         this EntityTypeBuilder<TEntity> entityTypeBuilder,
         TimeSpan dropAfter,
@@ -282,34 +191,38 @@ public static class TimescaleDbEntityTypeBuilderExtensions
         DateTimeOffset? initialStart = null,
         string? timezone = null)
         where TEntity : class
-        => (EntityTypeBuilder<TEntity>)((EntityTypeBuilder)entityTypeBuilder).HasRetentionPolicy(
-            PgInterval.Format(dropAfter),
-            scheduleInterval is { } schedule ? PgInterval.Format(schedule) : null,
-            initialStart,
-            timezone);
+        => ApplyRetentionPolicy(
+            entityTypeBuilder, PgInterval.Format(dropAfter),
+            scheduleInterval is { } s ? PgInterval.Format(s) : null, initialStart, timezone);
 
-    /// <summary>Raw-interval variant of <c>HasRetentionPolicy</c> (e.g. <c>"6 months"</c>).</summary>
-    public static EntityTypeBuilder HasRetentionPolicy(
-        this EntityTypeBuilder entityTypeBuilder,
-        string dropAfter,
-        string? scheduleInterval = null,
+    /// <inheritdoc cref="HasRetentionPolicy{TEntity}(EntityTypeBuilder{TEntity}, TimeSpan, TimeSpan?, DateTimeOffset?, string?)" />
+    public static EntityTypeBuilder<TEntity> HasRetentionPolicy<TEntity>(
+        this EntityTypeBuilder<TEntity> entityTypeBuilder,
+        int dropAfter,
+        Every unit,
         DateTimeOffset? initialStart = null,
         string? timezone = null)
-    {
-        ArgumentNullException.ThrowIfNull(entityTypeBuilder);
-        ArgumentException.ThrowIfNullOrWhiteSpace(dropAfter);
-
-        entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.RetentionPolicyDropAfter, dropAfter);
-        SetIfNotNull(entityTypeBuilder, TimescaleDbAnnotationNames.RetentionPolicyScheduleInterval, scheduleInterval);
-        SetIfNotNull(entityTypeBuilder, TimescaleDbAnnotationNames.RetentionPolicyInitialStart,
-            initialStart?.ToString("O"));
-        SetIfNotNull(entityTypeBuilder, TimescaleDbAnnotationNames.RetentionPolicyTimezone, timezone);
-        return entityTypeBuilder;
-    }
+        where TEntity : class
+        => ApplyRetentionPolicy(
+            entityTypeBuilder, PgInterval.Format(dropAfter, unit), null, initialStart, timezone);
 
     /// <summary>
-    ///     Adds a reorder policy (<c>add_reorder_policy</c>) using the EF index on the given
-    ///     properties; the index's database name is resolved when the model is finalized.
+    ///     Adds a retention policy to an integer-partitioned hypertable, with <paramref name="dropAfter" />
+    ///     expressed as a raw value in the partition column's own unit.
+    /// </summary>
+    public static EntityTypeBuilder<TEntity> HasRetentionPolicy<TEntity>(
+        this EntityTypeBuilder<TEntity> entityTypeBuilder,
+        long dropAfter,
+        DateTimeOffset? initialStart = null,
+        string? timezone = null)
+        where TEntity : class
+        => ApplyRetentionPolicy(
+            entityTypeBuilder, dropAfter.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            null, initialStart, timezone);
+
+    /// <summary>
+    ///     Adds a reorder policy using the EF index on the given properties; the index's database
+    ///     name is resolved when the model is finalized.
     /// </summary>
     public static EntityTypeBuilder<TEntity> HasReorderPolicy<TEntity>(
         this EntityTypeBuilder<TEntity> entityTypeBuilder,
@@ -317,93 +230,60 @@ public static class TimescaleDbEntityTypeBuilderExtensions
         where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(entityTypeBuilder);
-
         entityTypeBuilder.HasAnnotation(
             TimescaleDbAnnotationNames.ReorderPolicyIndexProperties,
             string.Join(",", ExpressionHelpers.GetPropertyNames(indexProperties)));
         return entityTypeBuilder;
     }
 
-    /// <summary>Adds a reorder policy using an explicitly named (possibly external) index.</summary>
-    public static EntityTypeBuilder HasReorderPolicy(
-        this EntityTypeBuilder entityTypeBuilder,
-        string indexName)
-    {
-        ArgumentNullException.ThrowIfNull(entityTypeBuilder);
-        ArgumentException.ThrowIfNullOrWhiteSpace(indexName);
-
-        entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.ReorderPolicyIndex, indexName);
-        return entityTypeBuilder;
-    }
-
-    /// <inheritdoc cref="HasReorderPolicy(EntityTypeBuilder, string)" />
+    /// <summary>Adds a reorder policy using an explicitly named index.</summary>
     public static EntityTypeBuilder<TEntity> HasReorderPolicy<TEntity>(
         this EntityTypeBuilder<TEntity> entityTypeBuilder,
         string indexName)
         where TEntity : class
-        => (EntityTypeBuilder<TEntity>)((EntityTypeBuilder)entityTypeBuilder).HasReorderPolicy(indexName);
+    {
+        ArgumentNullException.ThrowIfNull(entityTypeBuilder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(indexName);
+        entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.ReorderPolicyIndex, indexName);
+        return entityTypeBuilder;
+    }
 
     // ---------------------------------------------------------------- continuous aggregate
 
     /// <summary>
-    ///     Maps the entity to a TimescaleDB continuous aggregate: a materialized view created with
-    ///     <c>WITH (timescaledb.continuous)</c> over the given SQL query. The entity is mapped to the
-    ///     view for querying and excluded from normal table migrations.
+    ///     Maps the entity to a TimescaleDB continuous aggregate (a materialized view created with
+    ///     <c>WITH (timescaledb.continuous)</c> over <paramref name="query" />).
     /// </summary>
-    /// <param name="viewName">Name of the materialized view.</param>
-    /// <param name="query">
-    ///     The aggregate SELECT; must group by <c>time_bucket(...)</c> over the source hypertable.
-    /// </param>
-    /// <param name="materializedOnly">
-    ///     When false, real-time aggregation includes not-yet-materialized data. TimescaleDB default: true.
-    /// </param>
-    /// <param name="withNoData">Create the view without an initial full refresh. Default here: true.</param>
-    /// <param name="chunkInterval">Chunk interval of the materialization hypertable.</param>
-    /// <param name="schema">Optional schema of the view.</param>
-    public static EntityTypeBuilder IsContinuousAggregate(
-        this EntityTypeBuilder entityTypeBuilder,
-        string viewName,
-        string query,
-        bool materializedOnly = true,
-        bool withNoData = true,
-        string? chunkInterval = null,
-        string? schema = null)
-    {
-        ArgumentNullException.ThrowIfNull(entityTypeBuilder);
-        ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
-        ArgumentException.ThrowIfNullOrWhiteSpace(query);
-
-        entityTypeBuilder.ToView(viewName, schema);
-
-        entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.IsContinuousAggregate, true);
-        entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.ContinuousAggregateQuery, query);
-        entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.ContinuousAggregateMaterializedOnly, materializedOnly);
-        entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.ContinuousAggregateWithNoData, withNoData);
-
-        if (chunkInterval is not null)
-        {
-            entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.ContinuousAggregateChunkInterval, chunkInterval);
-        }
-
-        return entityTypeBuilder;
-    }
-
-    /// <inheritdoc cref="IsContinuousAggregate(EntityTypeBuilder, string, string, bool, bool, string?, string?)" />
     public static EntityTypeBuilder<TEntity> IsContinuousAggregate<TEntity>(
         this EntityTypeBuilder<TEntity> entityTypeBuilder,
         string viewName,
         string query,
         bool materializedOnly = true,
         bool withNoData = true,
-        string? chunkInterval = null,
+        TimeSpan? chunkInterval = null,
         string? schema = null)
         where TEntity : class
-        => (EntityTypeBuilder<TEntity>)((EntityTypeBuilder)entityTypeBuilder)
-            .IsContinuousAggregate(viewName, query, materializedOnly, withNoData, chunkInterval, schema);
+    {
+        ArgumentNullException.ThrowIfNull(entityTypeBuilder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(query);
 
-    /// <summary>
-    ///     Adds a refresh policy (<c>add_continuous_aggregate_policy</c>) to the continuous aggregate.
-    /// </summary>
+        entityTypeBuilder.ToView(viewName, schema);
+        entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.IsContinuousAggregate, true);
+        entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.ContinuousAggregateQuery, query);
+        entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.ContinuousAggregateMaterializedOnly, materializedOnly);
+        entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.ContinuousAggregateWithNoData, withNoData);
+
+        if (chunkInterval is { } interval)
+        {
+            entityTypeBuilder.HasAnnotation(
+                TimescaleDbAnnotationNames.ContinuousAggregateChunkInterval, PgInterval.Format(interval));
+        }
+
+        return entityTypeBuilder;
+    }
+
+    /// <summary>Adds a refresh policy (<c>add_continuous_aggregate_policy</c>) to the continuous aggregate.</summary>
     public static EntityTypeBuilder<TEntity> HasRefreshPolicy<TEntity>(
         this EntityTypeBuilder<TEntity> entityTypeBuilder,
         TimeSpan startOffset,
@@ -412,36 +292,84 @@ public static class TimescaleDbEntityTypeBuilderExtensions
         DateTimeOffset? initialStart = null,
         string? timezone = null)
         where TEntity : class
-        => (EntityTypeBuilder<TEntity>)((EntityTypeBuilder)entityTypeBuilder).HasRefreshPolicy(
-            PgInterval.Format(startOffset),
-            PgInterval.Format(endOffset),
-            scheduleInterval is { } schedule ? PgInterval.Format(schedule) : null,
-            initialStart,
-            timezone);
+        => ApplyRefreshPolicy(
+            entityTypeBuilder, PgInterval.Format(startOffset), PgInterval.Format(endOffset),
+            scheduleInterval is { } s ? PgInterval.Format(s) : null, initialStart, timezone);
 
-    /// <summary>Raw-interval variant of <c>HasRefreshPolicy</c>.</summary>
-    public static EntityTypeBuilder HasRefreshPolicy(
-        this EntityTypeBuilder entityTypeBuilder,
-        string startOffset,
-        string endOffset,
-        string? scheduleInterval = null,
+    /// <inheritdoc cref="HasRefreshPolicy{TEntity}(EntityTypeBuilder{TEntity}, TimeSpan, TimeSpan, TimeSpan?, DateTimeOffset?, string?)" />
+    public static EntityTypeBuilder<TEntity> HasRefreshPolicy<TEntity>(
+        this EntityTypeBuilder<TEntity> entityTypeBuilder,
+        int startOffset,
+        int endOffset,
+        Every unit,
         DateTimeOffset? initialStart = null,
         string? timezone = null)
-    {
-        ArgumentNullException.ThrowIfNull(entityTypeBuilder);
-        ArgumentException.ThrowIfNullOrWhiteSpace(startOffset);
-        ArgumentException.ThrowIfNullOrWhiteSpace(endOffset);
+        where TEntity : class
+        => ApplyRefreshPolicy(
+            entityTypeBuilder, PgInterval.Format(startOffset, unit), PgInterval.Format(endOffset, unit),
+            null, initialStart, timezone);
 
-        entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.RefreshPolicyStartOffset, startOffset);
-        entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.RefreshPolicyEndOffset, endOffset);
-        SetIfNotNull(entityTypeBuilder, TimescaleDbAnnotationNames.RefreshPolicyScheduleInterval, scheduleInterval);
-        SetIfNotNull(entityTypeBuilder, TimescaleDbAnnotationNames.RefreshPolicyInitialStart,
-            initialStart?.ToString("O"));
-        SetIfNotNull(entityTypeBuilder, TimescaleDbAnnotationNames.RefreshPolicyTimezone, timezone);
-        return entityTypeBuilder;
+    // ---------------------------------------------------------------- apply helpers
+
+    private static EntityTypeBuilder<TEntity> ApplyHypertable<TEntity>(
+        EntityTypeBuilder<TEntity> builder, string column, string? chunkInterval, bool? createDefaultIndexes)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.HasAnnotation(TimescaleDbAnnotationNames.IsHypertable, true);
+        builder.HasAnnotation(TimescaleDbAnnotationNames.PartitionColumn, column);
+        if (chunkInterval is not null)
+        {
+            builder.HasAnnotation(TimescaleDbAnnotationNames.ChunkInterval, chunkInterval);
+        }
+
+        if (createDefaultIndexes is not null)
+        {
+            builder.HasAnnotation(TimescaleDbAnnotationNames.CreateDefaultIndexes, createDefaultIndexes);
+        }
+
+        return builder;
     }
 
-    // ---------------------------------------------------------------- helpers
+    private static EntityTypeBuilder<TEntity> ApplyColumnstorePolicy<TEntity>(
+        EntityTypeBuilder<TEntity> builder, string after, string? schedule,
+        DateTimeOffset? initialStart, string? timezone)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.HasAnnotation(TimescaleDbAnnotationNames.ColumnstorePolicyAfter, after);
+        SetIfNotNull(builder, TimescaleDbAnnotationNames.ColumnstorePolicyScheduleInterval, schedule);
+        SetIfNotNull(builder, TimescaleDbAnnotationNames.ColumnstorePolicyInitialStart, initialStart?.ToString("O"));
+        SetIfNotNull(builder, TimescaleDbAnnotationNames.ColumnstorePolicyTimezone, timezone);
+        return builder;
+    }
+
+    private static EntityTypeBuilder<TEntity> ApplyRetentionPolicy<TEntity>(
+        EntityTypeBuilder<TEntity> builder, string dropAfter, string? schedule,
+        DateTimeOffset? initialStart, string? timezone)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.HasAnnotation(TimescaleDbAnnotationNames.RetentionPolicyDropAfter, dropAfter);
+        SetIfNotNull(builder, TimescaleDbAnnotationNames.RetentionPolicyScheduleInterval, schedule);
+        SetIfNotNull(builder, TimescaleDbAnnotationNames.RetentionPolicyInitialStart, initialStart?.ToString("O"));
+        SetIfNotNull(builder, TimescaleDbAnnotationNames.RetentionPolicyTimezone, timezone);
+        return builder;
+    }
+
+    private static EntityTypeBuilder<TEntity> ApplyRefreshPolicy<TEntity>(
+        EntityTypeBuilder<TEntity> builder, string startOffset, string endOffset, string? schedule,
+        DateTimeOffset? initialStart, string? timezone)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.HasAnnotation(TimescaleDbAnnotationNames.RefreshPolicyStartOffset, startOffset);
+        builder.HasAnnotation(TimescaleDbAnnotationNames.RefreshPolicyEndOffset, endOffset);
+        SetIfNotNull(builder, TimescaleDbAnnotationNames.RefreshPolicyScheduleInterval, schedule);
+        SetIfNotNull(builder, TimescaleDbAnnotationNames.RefreshPolicyInitialStart, initialStart?.ToString("O"));
+        SetIfNotNull(builder, TimescaleDbAnnotationNames.RefreshPolicyTimezone, timezone);
+        return builder;
+    }
 
     private static void SetIfNotNull(EntityTypeBuilder builder, string annotation, string? value)
     {

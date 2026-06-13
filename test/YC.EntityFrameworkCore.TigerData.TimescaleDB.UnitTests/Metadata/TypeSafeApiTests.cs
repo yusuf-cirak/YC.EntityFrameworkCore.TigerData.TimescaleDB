@@ -1,3 +1,4 @@
+using YC.EntityFrameworkCore.TigerData.TimescaleDB;
 using Microsoft.EntityFrameworkCore;
 using YC.EntityFrameworkCore.TigerData.TimescaleDB.Metadata;
 using YC.EntityFrameworkCore.TigerData.TimescaleDB.Metadata.Builders;
@@ -30,7 +31,7 @@ public class TypeSafeApiTests
             e.IsHypertable(x => x.CreatedAt, chunkInterval: TimeSpan.FromDays(1));
             e.HasColumnstore(cs => cs
                 .SegmentBy(x => x.CustomerId)
-                .OrderByDescending(x => x.CreatedAt, nulls: NullsPosition.Last)
+                .OrderByDescending(x => x.CreatedAt, nulls: Nulls.Last)
                 .ThenBy(x => x.OrderId));
         }));
 
@@ -64,15 +65,14 @@ public class TypeSafeApiTests
             entity.FindAnnotation(TimescaleDbAnnotationNames.ColumnstoreOrderBy)?.Value);
     }
 
-    [Hypertable]
     [Columnstore]
     private class AttributedOrder
     {
-        [HypertablePartition]
-        [ColumnstoreOrderBy(Descending = true, NullsFirst = true)]
+        [PartitionColumn]
+        [OrderBy(0, Sort.Descending, Nulls.First)]
         public DateTimeOffset CreatedAt { get; set; }
 
-        [ColumnstoreSegmentBy]
+        [SegmentBy]
         public string CustomerId { get; set; } = null!;
     }
 
@@ -82,14 +82,13 @@ public class TypeSafeApiTests
         var exception = Assert.Throws<InvalidOperationException>(() =>
             TimescaleDbModelBuilder.Build(mb => mb.Entity<TwoPartitions>(e => e.HasNoKey())));
 
-        Assert.Contains("more than one property with [HypertablePartition]", exception.Message);
+        Assert.Contains("more than one property with [PartitionColumn]", exception.Message);
     }
 
-    [Hypertable]
     private class TwoPartitions
     {
-        [HypertablePartition] public DateTime A { get; set; }
-        [HypertablePartition] public DateTime B { get; set; }
+        [PartitionColumn] public DateTime A { get; set; }
+        [PartitionColumn] public DateTime B { get; set; }
     }
 
     [Fact]
@@ -148,7 +147,7 @@ public class TypeSafeApiTests
             TimescaleDbModelBuilder.Build(mb => mb.Entity<IntegerSeries>(e =>
             {
                 e.HasNoKey();
-                e.IsHypertable(x => x.UnixMicros, chunkInterval: "1 day");
+                e.IsHypertable(x => x.UnixMicros, chunkInterval: TimeSpan.FromDays(1));
             })));
 
         Assert.Contains("not numeric", exception.Message);
@@ -161,8 +160,8 @@ public class TypeSafeApiTests
             TimescaleDbModelBuilder.Build(mb => mb.Entity<IntegerSeries>(e =>
             {
                 e.HasNoKey();
-                e.IsHypertable(x => x.UnixMicros, chunkInterval: 86_400_000_000);
-                e.HasRetentionPolicy(dropAfter: "7776000000000");
+                e.IsHypertableByInteger(x => x.UnixMicros, 86_400_000_000);
+                e.HasRetentionPolicy(7_776_000_000_000L);
             })));
 
         Assert.Contains("integer-now function", exception.Message);
@@ -174,8 +173,8 @@ public class TypeSafeApiTests
         var model = TimescaleDbModelBuilder.Build(mb => mb.Entity<IntegerSeries>(e =>
         {
             e.HasNoKey();
-            e.IsHypertable(x => x.UnixMicros, chunkInterval: 86_400_000_000, integerNowFunction: "unix_micros_now");
-            e.HasRetentionPolicy(dropAfter: "7776000000000");
+            e.IsHypertableByInteger(x => x.UnixMicros, 86_400_000_000, integerNowFunction: "unix_micros_now");
+            e.HasRetentionPolicy(7_776_000_000_000L);
         }));
 
         var entity = model.FindEntityType(typeof(IntegerSeries))!;

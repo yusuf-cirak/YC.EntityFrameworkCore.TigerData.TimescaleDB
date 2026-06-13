@@ -32,7 +32,7 @@ public class TimescaleDbOperationSqlTests
         e.Property(x => x.Time).HasColumnName("time");
         e.Property(x => x.DeviceId).HasColumnName("device_id");
         e.Property(x => x.Value).HasColumnName("value");
-        e.IsHypertable(x => x.Time, chunkInterval: "1 day");
+        e.IsHypertable(x => x.Time, chunkInterval: TimeSpan.FromDays(1));
     });
 
     [Fact]
@@ -59,9 +59,9 @@ public class TimescaleDbOperationSqlTests
                 e.Property(x => x.Bucket).HasColumnName("bucket");
                 e.Property(x => x.Avg).HasColumnName("avg");
                 e.IsContinuousAggregate("hourly_avg", CaggQuery);
-                e.HasRefreshPolicy(startOffset: "3 days", endOffset: "1 hour", scheduleInterval: "1 hour");
+                e.HasRefreshPolicy(TimeSpan.FromDays(3), TimeSpan.FromHours(1), TimeSpan.FromHours(1));
             });
-            mb.HasTimescaleDbJob("nightly_cleanup", "public.cleanup", scheduleInterval: "1 day",
+            mb.HasTimescaleDbJob("nightly_cleanup", "public.cleanup", scheduleInterval: TimeSpan.FromDays(1),
                 config: """{"drop_after":"30 days"}""");
         });
 
@@ -71,7 +71,7 @@ public class TimescaleDbOperationSqlTests
             && s.Contains("WITH NO DATA"));
         Assert.Contains(sql, s => s.Contains(
             "SELECT add_continuous_aggregate_policy('\"hourly_avg\"', start_offset => INTERVAL '3 days', "
-            + "end_offset => INTERVAL '1 hour', schedule_interval => INTERVAL '1 hour');"));
+            + "end_offset => INTERVAL '01:00:00', schedule_interval => INTERVAL '01:00:00');"));
         Assert.Contains(sql, s => s.Contains("SELECT add_job('public.cleanup'::regproc")
             && s.Contains("schedule_interval => INTERVAL '1 day'")
             && s.Contains("""config => '{"drop_after":"30 days"}'::jsonb""")
@@ -123,7 +123,7 @@ public class TimescaleDbOperationSqlTests
         {
             e.HasNoKey();
             e.IsContinuousAggregate("hourly_avg", query);
-            e.HasRefreshPolicy(startOffset: "3 days", endOffset: "1 hour");
+            e.HasRefreshPolicy(TimeSpan.FromDays(3), TimeSpan.FromHours(1));
         });
 
         const string newQuery =

@@ -153,8 +153,8 @@ public class LifecycleTests(TimescaleDbContainerFixture fixture)
             e.ToTable("integer_series");
             e.Property(x => x.UnixSeconds).HasColumnName("unix_seconds");
             e.Property(x => x.Value).HasColumnName("value");
-            e.IsHypertable(x => x.UnixSeconds, chunkInterval: 86_400, integerNowFunction: "unix_seconds_now");
-            e.HasRetentionPolicy(dropAfter: "7776000"); // 90 days in seconds
+            e.IsHypertableByInteger(x => x.UnixSeconds, 86_400, integerNowFunction: "unix_seconds_now");
+            e.HasRetentionPolicy(7_776_000L); // 90 days in seconds
         });
 
         await DiffExecutor.ApplyAsync(connectionString, null, model, ct);

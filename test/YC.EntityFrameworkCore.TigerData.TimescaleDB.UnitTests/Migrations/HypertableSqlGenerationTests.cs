@@ -1,3 +1,4 @@
+using YC.EntityFrameworkCore.TigerData.TimescaleDB;
 using Microsoft.EntityFrameworkCore;
 using YC.EntityFrameworkCore.TigerData.TimescaleDB.UnitTests.TestUtilities;
 
@@ -21,7 +22,7 @@ public class HypertableSqlGenerationTests
             e.HasNoKey();
             e.ToTable("readings");
             e.Property(x => x.Time).HasColumnName("time");
-            e.IsHypertable(x => x.Time, chunkInterval: "1 day");
+            e.IsHypertable(x => x.Time, chunkInterval: TimeSpan.FromDays(1));
         }));
 
         var list = sql.ToList();
@@ -48,8 +49,8 @@ public class HypertableSqlGenerationTests
             e.IsHypertable(x => x.Time);
             e.HasSpacePartition(x => x.DeviceId, partitions: 4);
             e.HasColumnstore(cs => cs.SegmentBy(x => x.DeviceId).OrderByDescending(x => x.Time));
-            e.HasColumnstorePolicy(after: "7 days");
-            e.HasRetentionPolicy(dropAfter: "90 days");
+            e.HasColumnstorePolicy(7, Every.Day);
+            e.HasRetentionPolicy(90, Every.Day);
         }));
 
         Assert.Contains(sql, s => s.Contains("SELECT add_dimension('\"readings\"', by_hash('device_id', 4));"));
@@ -69,7 +70,7 @@ public class HypertableSqlGenerationTests
             e.HasNoKey();
             e.ToTable("series");
             e.Property(x => x.UnixMicros).HasColumnName("unix_micros");
-            e.IsHypertable(x => x.UnixMicros, chunkInterval: 86_400_000_000, integerNowFunction: "micros_now");
+            e.IsHypertableByInteger(x => x.UnixMicros, 86_400_000_000, integerNowFunction: "micros_now");
         }));
 
         Assert.Contains(sql, s => s.Contains(

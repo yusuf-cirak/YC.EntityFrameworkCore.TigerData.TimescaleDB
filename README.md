@@ -51,26 +51,32 @@ protected override void OnModelCreating(ModelBuilder modelBuilder)
 }
 ```
 
-### Attributes (equivalent) — property-attached, no name strings
+### Attributes (equivalent) — magic-string-free, dependency-safe
+
+No interval is a string; intervals are `(value, Every)`. There is **no `[Hypertable]` attribute** — the
+`[PartitionColumn]` marker *is* the hypertable declaration, so compression / retention can't be written
+without one.
 
 ```csharp
-[Hypertable(ChunkIntervalDays = 1)]
-[Columnstore]
-[ColumnstorePolicy(AfterDays = 7)]
-[RetentionPolicy(DropAfterDays = 90)]
+[Columnstore(CompressAfter = 7, CompressAfterUnit = Every.Day)]
+[Retention(90, Every.Day)]
 public class Reading
 {
-    [HypertablePartition]
-    [ColumnstoreOrderBy(Descending = true)]
+    [PartitionColumn(1, Every.Day)]          // declares the hypertable + chunk interval
+    [OrderBy(0, Sort.Descending)]            // columnstore ordering
     public DateTimeOffset Time { get; set; }
 
     [SpacePartition(4)]
-    [ColumnstoreSegmentBy]
+    [SegmentBy]                              // columnstore segment column
     public string DeviceId { get; set; } = null!;
 
     public double Value { get; set; }
 }
 ```
+
+Reorder policies and integer-now functions are Fluent-only (they need a database identifier):
+`e.HasReorderPolicy(x => new { x.DeviceId, x.Time })`, `e.IsHypertableByInteger(x => x.Epoch, 86_400,
+integerNowFunction: "epoch_now")`.
 
 ### Continuous aggregates
 
@@ -171,8 +177,9 @@ the **data is preserved** — nothing is rejected:
 
 ## More features
 
-- **Integer-time hypertables**: `IsHypertable(x => x.UnixMicros, chunkInterval: 86_400_000_000,
-  integerNowFunction: "micros_now")` — the integer-now function is required (and validated) for policies.
+- **Integer-time hypertables**: `IsHypertableByInteger(x => x.UnixMicros, 86_400_000_000,
+  integerNowFunction: "micros_now")` — the integer-now function is required (and validated) for policies;
+  policy ages use the `long` overloads (`HasRetentionPolicy(7_776_000_000_000L)`).
 - **Chunk skipping**: `HasChunkSkipping(x => x.Value)` / `[ChunkSkipping]`.
 - **Policy scheduling**: `initialStart` / `timezone` on retention, columnstore and refresh policies.
 - **Columnstore chunk merging**: `cs.MergeChunksUpTo(TimeSpan.FromDays(7))`.

@@ -35,7 +35,7 @@ namespace TimescaleDb.Sample.Migrations
 
             migrationBuilder.Sql("CREATE MATERIALIZED VIEW \"hourly_averages\"\r\nWITH (timescaledb.continuous) AS\r\nSELECT time_bucket(INTERVAL '1 hour', time) AS bucket,\n       device_id,\n       avg(value) AS average\nFROM readings\nGROUP BY 1, 2\r\nWITH NO DATA;");
 
-            migrationBuilder.Sql("SELECT add_continuous_aggregate_policy('\"hourly_averages\"', start_offset => INTERVAL '3 days', end_offset => INTERVAL '1 hour', schedule_interval => INTERVAL '1 hour');");
+            migrationBuilder.Sql("SELECT add_continuous_aggregate_policy('\"hourly_averages\"', start_offset => INTERVAL '3 days', end_offset => INTERVAL '01:00:00', schedule_interval => INTERVAL '01:00:00');");
 
             migrationBuilder.Sql("SELECT add_job('public.sample_noop'::regproc, schedule_interval => INTERVAL '1 day', job_name => 'sample_noop_job');");
         }

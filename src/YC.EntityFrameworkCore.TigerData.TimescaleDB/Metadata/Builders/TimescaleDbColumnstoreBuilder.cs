@@ -1,16 +1,9 @@
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using YC.EntityFrameworkCore.TigerData.TimescaleDB;
 using YC.EntityFrameworkCore.TigerData.TimescaleDB.Internal;
 
 namespace YC.EntityFrameworkCore.TigerData.TimescaleDB.Metadata.Builders;
-
-/// <summary>Position of NULLs in a columnstore ordering.</summary>
-public enum NullsPosition
-{
-    Unspecified = 0,
-    First = 1,
-    Last = 2,
-}
 
 /// <summary>
 ///     Type-safe configuration of the TimescaleDB columnstore: segment-by columns,
@@ -39,25 +32,25 @@ public class TimescaleDbColumnstoreBuilder<TEntity>
     /// <summary>Adds an ascending column to <c>timescaledb.orderby</c>.</summary>
     public virtual TimescaleDbColumnstoreBuilder<TEntity> OrderBy(
         Expression<Func<TEntity, object?>> property,
-        NullsPosition nulls = NullsPosition.Unspecified)
+        Nulls nulls = Nulls.Default)
         => AddOrderBy(property, descending: false, nulls);
 
     /// <summary>Adds a descending column to <c>timescaledb.orderby</c>.</summary>
     public virtual TimescaleDbColumnstoreBuilder<TEntity> OrderByDescending(
         Expression<Func<TEntity, object?>> property,
-        NullsPosition nulls = NullsPosition.Unspecified)
+        Nulls nulls = Nulls.Default)
         => AddOrderBy(property, descending: true, nulls);
 
     /// <summary>Adds a further ascending ordering column.</summary>
     public virtual TimescaleDbColumnstoreBuilder<TEntity> ThenBy(
         Expression<Func<TEntity, object?>> property,
-        NullsPosition nulls = NullsPosition.Unspecified)
+        Nulls nulls = Nulls.Default)
         => AddOrderBy(property, descending: false, nulls);
 
     /// <summary>Adds a further descending ordering column.</summary>
     public virtual TimescaleDbColumnstoreBuilder<TEntity> ThenByDescending(
         Expression<Func<TEntity, object?>> property,
-        NullsPosition nulls = NullsPosition.Unspecified)
+        Nulls nulls = Nulls.Default)
         => AddOrderBy(property, descending: true, nulls);
 
     /// <summary>
@@ -72,18 +65,17 @@ public class TimescaleDbColumnstoreBuilder<TEntity>
     }
 
     /// <inheritdoc cref="MergeChunksUpTo(TimeSpan)" />
-    public virtual TimescaleDbColumnstoreBuilder<TEntity> MergeChunksUpTo(string interval)
+    public virtual TimescaleDbColumnstoreBuilder<TEntity> MergeChunksUpTo(int interval, Every unit)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(interval);
         _entityTypeBuilder.HasAnnotation(
-            TimescaleDbAnnotationNames.ColumnstoreChunkMergeInterval, interval);
+            TimescaleDbAnnotationNames.ColumnstoreChunkMergeInterval, PgInterval.Format(interval, unit));
         return this;
     }
 
     private TimescaleDbColumnstoreBuilder<TEntity> AddOrderBy(
         Expression<Func<TEntity, object?>> property,
         bool descending,
-        NullsPosition nulls)
+        Nulls nulls)
     {
         var segment = ExpressionHelpers.GetPropertyName(property);
 
@@ -94,8 +86,8 @@ public class TimescaleDbColumnstoreBuilder<TEntity>
 
         segment += nulls switch
         {
-            NullsPosition.First => " NULLS FIRST",
-            NullsPosition.Last => " NULLS LAST",
+            Nulls.First => " NULLS FIRST",
+            Nulls.Last => " NULLS LAST",
             _ => string.Empty,
         };
 
