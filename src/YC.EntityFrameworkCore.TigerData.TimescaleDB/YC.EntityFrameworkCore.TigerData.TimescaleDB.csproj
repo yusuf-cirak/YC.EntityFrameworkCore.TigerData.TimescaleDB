@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>YC.EntityFrameworkCore.TigerData.TimescaleDB</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PackageId>YC.EntityFrameworkCore.TigerData.TimescaleDB</PackageId>
+    <Description>TimescaleDB (TigerData) support for Entity Framework Core on top of the Npgsql provider: hypertables, columnstore/compression, continuous aggregates, retention/reorder policies, jobs, UUIDv7 and hyperfunction query translation — configurable via Fluent API and attributes, fully integrated with EF Core migrations.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <!-- Compile-only: design-time types (migration codegen, scaffolding) live in this
+         assembly but are only loaded by the 'dotnet ef' tools, which provide the
+         Design assembly themselves. Same approach as Npgsql's merged Design package. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="buildTransitive\YC.EntityFrameworkCore.TigerData.TimescaleDB.props"
+          Pack="true" PackagePath="buildTransitive\" />
+  </ItemGroup>
+
+</Project>

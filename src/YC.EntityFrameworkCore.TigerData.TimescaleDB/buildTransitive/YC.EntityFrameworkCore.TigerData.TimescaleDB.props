@@ -1,0 +1,11 @@
+<Project>
+  <!--
+    Injects the design-time services reference into the consuming project so that
+    'dotnet ef' discovers the TimescaleDB migration code generator and scaffolder.
+  -->
+  <ItemGroup>
+    <AssemblyAttribute Include="Microsoft.EntityFrameworkCore.Design.DesignTimeServicesReferenceAttribute">
+      <_Parameter1>YC.EntityFrameworkCore.TigerData.TimescaleDB.Design.TimescaleDbDesignTimeServices, YC.EntityFrameworkCore.TigerData.TimescaleDB</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+</Project>

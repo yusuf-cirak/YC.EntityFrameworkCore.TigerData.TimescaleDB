@@ -1,0 +1,13 @@
+bin/
+obj/
+/packages/
+riderModule.iml
+/_ReSharper.Caches/
+
+# IDE
+.idea/
+.vs/
+
+# Local tooling artifacts
+ruvector.db
+*.db

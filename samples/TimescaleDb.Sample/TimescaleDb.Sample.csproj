@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>TimescaleDb.Sample</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- With the NuGet package this attribute is injected by the package's buildTransitive props;
+         project references do not flow props, so the sample declares it explicitly. -->
+    <AssemblyAttribute Include="Microsoft.EntityFrameworkCore.Design.DesignTimeServicesReferenceAttribute">
+      <_Parameter1>YC.EntityFrameworkCore.TigerData.TimescaleDB.Design.TimescaleDbDesignTimeServices, YC.EntityFrameworkCore.TigerData.TimescaleDB</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\YC.EntityFrameworkCore.TigerData.TimescaleDB\YC.EntityFrameworkCore.TigerData.TimescaleDB.csproj" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+</Project>

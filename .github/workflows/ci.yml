@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore YC.EntityFrameworkCore.TigerData.TimescaleDB.slnx
+
+      - name: Build
+        run: dotnet build YC.EntityFrameworkCore.TigerData.TimescaleDB.slnx --no-restore --configuration Release
+
+      - name: Unit tests
+        run: >
+          dotnet test test/YC.EntityFrameworkCore.TigerData.TimescaleDB.UnitTests
+          --no-build --configuration Release
+
+      - name: Functional tests (Testcontainers, TimescaleDB pg17)
+        run: >
+          dotnet test test/YC.EntityFrameworkCore.TigerData.TimescaleDB.FunctionalTests
+          --no-build --configuration Release
+
+      - name: Pack
+        run: >
+          dotnet pack YC.EntityFrameworkCore.TigerData.TimescaleDB.slnx
+          --no-build --configuration Release --output artifacts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nuget-packages
+          path: artifacts/*.nupkg

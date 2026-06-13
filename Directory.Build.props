@@ -1,0 +1,46 @@
+<Project>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <!--
+      EF1001: extending provider "pubternal" surfaces (NpgsqlMigrationsSqlGenerator,
+      NpgsqlAnnotationProvider, ...) is the established pattern for EF Core provider
+      extensions; Npgsql's own plugins (NTS, NodaTime) do the same.
+    -->
+    <NoWarn>$(NoWarn);EF1001</NoWarn>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Package metadata">
+    <Authors>Yusuf Çırak</Authors>
+    <Product>YC.EntityFrameworkCore.TigerData.TimescaleDB</Product>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/yusufcirak/YC.EntityFrameworkCore.TigerData.TimescaleDB</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/yusufcirak/YC.EntityFrameworkCore.TigerData.TimescaleDB</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>timescaledb;tigerdata;entity-framework-core;efcore;time-series;postgresql;npgsql;hypertable</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <VersionPrefix>0.1.0</VersionPrefix>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Build quality" Condition="'$(IsPackable)' == 'true'">
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Projects opt in to packing explicitly. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>
