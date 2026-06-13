@@ -88,7 +88,10 @@ public static class TimescaleDbEntityTypeBuilderExtensions
         return entityTypeBuilder;
     }
 
-    /// <summary>Adds a hash (space) partition dimension on the given column.</summary>
+    /// <summary>
+    ///     Adds a hash (space) partition dimension on the given column. Call multiple times to add
+    ///     several dimensions (TimescaleDB allows one time + several space dimensions).
+    /// </summary>
     public static EntityTypeBuilder<TEntity> HasSpacePartition<TEntity>(
         this EntityTypeBuilder<TEntity> entityTypeBuilder,
         Expression<Func<TEntity, object?>> column,
@@ -98,9 +101,39 @@ public static class TimescaleDbEntityTypeBuilderExtensions
         ArgumentNullException.ThrowIfNull(entityTypeBuilder);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(partitions, 0);
 
+        var item = $"{ExpressionHelpers.GetPropertyName(column)}:{partitions}";
+        var existing = entityTypeBuilder.Metadata
+            .FindAnnotation(TimescaleDbAnnotationNames.SpaceDimensions)?.Value as string;
+
         entityTypeBuilder.HasAnnotation(
-            TimescaleDbAnnotationNames.SpacePartitionColumn, ExpressionHelpers.GetPropertyName(column));
-        entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.SpacePartitions, partitions);
+            TimescaleDbAnnotationNames.SpaceDimensions,
+            existing is null ? item : $"{existing}, {item}");
+        return entityTypeBuilder;
+    }
+
+    /// <summary>
+    ///     Attaches the hypertable to a tablespace (<c>attach_tablespace</c>). Call multiple times.
+    ///     Declare named <see cref="Tablespace" /> instances rather than passing raw strings.
+    /// </summary>
+    public static EntityTypeBuilder<TEntity> HasTablespace<TEntity>(
+        this EntityTypeBuilder<TEntity> entityTypeBuilder,
+        Tablespace tablespace)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(entityTypeBuilder);
+        var name = tablespace.Name;
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+
+        var existing = entityTypeBuilder.Metadata
+            .FindAnnotation(TimescaleDbAnnotationNames.Tablespaces)?.Value as string;
+        var names = existing is null
+            ? name
+            : string.Join(", ", existing
+                .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                .Where(n => n != name)
+                .Append(name));
+
+        entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.Tablespaces, names);
         return entityTypeBuilder;
     }
 
@@ -124,6 +157,56 @@ public static class TimescaleDbEntityTypeBuilderExtensions
                 .Append(name));
 
         entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.ChunkSkippingColumns, columns);
+        return entityTypeBuilder;
+    }
+
+    // ---------------------------------------------------------------- migration behavior toggles
+
+    /// <summary>
+    ///     Controls whether converting an existing (populated) plain table into a hypertable migrates
+    ///     the existing rows into chunks (<c>migrate_data => true</c>). Default: <c>true</c>. When
+    ///     <c>false</c>, TimescaleDB only creates the hypertable — it rejects a non-empty table, so use
+    ///     this only for empty tables or when migrating the data yourself.
+    /// </summary>
+    public static EntityTypeBuilder<TEntity> WithMigrateData<TEntity>(
+        this EntityTypeBuilder<TEntity> entityTypeBuilder,
+        bool migrateData = true)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(entityTypeBuilder);
+        entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.MigrateData, migrateData);
+        return entityTypeBuilder;
+    }
+
+    /// <summary>
+    ///     Controls whether changes TimescaleDB cannot apply in place trigger a data-copying table
+    ///     rebuild (hypertable→plain, partition column change, space dimension drop/repartition).
+    ///     Default: <c>true</c>. When <c>false</c>, such a change throws at migration generation instead
+    ///     of rebuilding — re-enable it or perform the change manually.
+    /// </summary>
+    public static EntityTypeBuilder<TEntity> WithRebuildData<TEntity>(
+        this EntityTypeBuilder<TEntity> entityTypeBuilder,
+        bool rebuildData = true)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(entityTypeBuilder);
+        entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.RebuildData, rebuildData);
+        return entityTypeBuilder;
+    }
+
+    /// <summary>
+    ///     Controls whether disabling the columnstore first converts every compressed chunk back to
+    ///     rowstore. Default: <c>true</c>. When <c>false</c>, only the policy is removed and the
+    ///     columnstore flag flipped — TimescaleDB rejects this if any chunk is still compressed, so use
+    ///     it only when none are.
+    /// </summary>
+    public static EntityTypeBuilder<TEntity> WithAutoDecompress<TEntity>(
+        this EntityTypeBuilder<TEntity> entityTypeBuilder,
+        bool autoDecompress = true)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(entityTypeBuilder);
+        entityTypeBuilder.HasAnnotation(TimescaleDbAnnotationNames.AutoDecompress, autoDecompress);
         return entityTypeBuilder;
     }
 

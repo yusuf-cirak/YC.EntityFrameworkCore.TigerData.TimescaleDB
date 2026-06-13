@@ -80,21 +80,27 @@ public class TimescaleDbModelFinalizingConvention : IModelFinalizingConvention
 
         entityType.SetAnnotation(TimescaleDbAnnotationNames.PartitionColumn, partitionColumn);
 
-        // Space partition: canonicalize column name (emitted as add_dimension by the generator).
-        if (entityType.FindAnnotation(TimescaleDbAnnotationNames.SpacePartitionColumn)?.Value is string spaceReference)
+        // Space dimensions: canonicalize each column name (emitted as add_dimension by the generator).
+        if (entityType.FindAnnotation(TimescaleDbAnnotationNames.SpaceDimensions)?.Value is string dimensions)
         {
-            if (entityType.FindAnnotation(TimescaleDbAnnotationNames.SpacePartitions)?.Value is not int partitions
-                || partitions <= 0)
-            {
-                throw new InvalidOperationException(
-                    $"The space partition of hypertable '{entityType.DisplayName()}' must specify a positive " +
-                    "number of partitions.");
-            }
+            var store = storeObject;
+            var canonical = string.Join(", ", dimensions
+                .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                .Select(item =>
+                {
+                    var parts = item.Split(':', 2);
+                    if (parts.Length != 2 || !int.TryParse(parts[1], out var partitions) || partitions <= 0)
+                    {
+                        throw new InvalidOperationException(
+                            $"The space dimension '{item}' of hypertable '{entityType.DisplayName()}' must specify " +
+                            "a positive number of partitions.");
+                    }
 
-            var spaceProperty = ResolveProperty(entityType, spaceReference, storeObject);
-            entityType.SetAnnotation(
-                TimescaleDbAnnotationNames.SpacePartitionColumn,
-                GetColumnName(spaceProperty, storeObject, entityType));
+                    var column = GetColumnName(ResolveProperty(entityType, parts[0], store), store, entityType);
+                    return $"{column}:{partitions}";
+                }));
+
+            entityType.SetAnnotation(TimescaleDbAnnotationNames.SpaceDimensions, canonical);
         }
 
         // Chunk skipping: canonicalize column list.
@@ -229,7 +235,8 @@ public class TimescaleDbModelFinalizingConvention : IModelFinalizingConvention
     {
         var hypertableOnly = new List<(string Annotation, string Feature)>
         {
-            (TimescaleDbAnnotationNames.SpacePartitionColumn, "space partition"),
+            (TimescaleDbAnnotationNames.SpaceDimensions, "space partition"),
+            (TimescaleDbAnnotationNames.Tablespaces, "tablespace"),
             (TimescaleDbAnnotationNames.ReorderPolicyIndex, "reorder policy"),
             (TimescaleDbAnnotationNames.ReorderPolicyIndexProperties, "reorder policy"),
             (TimescaleDbAnnotationNames.ChunkSkippingColumns, "chunk skipping"),

@@ -158,6 +158,168 @@ public class TimescaleDbOperationSqlTests
     }
 
     [Fact]
+    public void Cagg_retention_policy_added_and_removed()
+    {
+        Action<ModelBuilder> Cagg(bool retention) => mb =>
+        {
+            Hypertable(mb);
+            mb.Entity<HourlyAvg>(e =>
+            {
+                e.HasNoKey();
+                e.Property(x => x.Bucket).HasColumnName("bucket");
+                e.Property(x => x.Avg).HasColumnName("avg");
+                e.IsContinuousAggregate("hourly_avg", CaggQuery);
+                if (retention)
+                {
+                    e.HasRetentionPolicy(7, Every.Day);
+                }
+            });
+        };
+
+        var added = MigrationSqlHelper.GenerateSql(Cagg(false), Cagg(true));
+        Assert.Contains(added, s => s.Contains(
+            "SELECT add_retention_policy('\"hourly_avg\"', drop_after => INTERVAL '7 days');"));
+
+        var removed = MigrationSqlHelper.GenerateSql(Cagg(true), Cagg(false));
+        Assert.Contains(removed, s => s.Contains(
+            "SELECT remove_retention_policy('\"hourly_avg\"', if_exists => true);"));
+    }
+
+    [Fact]
+    public void Cagg_columnstore_policy_added_and_removed()
+    {
+        Action<ModelBuilder> Cagg(bool policy) => mb =>
+        {
+            Hypertable(mb);
+            mb.Entity<HourlyAvg>(e =>
+            {
+                e.HasNoKey();
+                e.Property(x => x.Bucket).HasColumnName("bucket");
+                e.Property(x => x.Avg).HasColumnName("avg");
+                e.IsContinuousAggregate("hourly_avg", CaggQuery);
+                e.HasColumnstore(cs => cs.OrderByDescending(x => x.Bucket));
+                if (policy)
+                {
+                    e.HasColumnstorePolicy(7, Every.Day);
+                }
+            });
+        };
+
+        var added = MigrationSqlHelper.GenerateSql(Cagg(false), Cagg(true));
+        Assert.Contains(added, s => s.Contains(
+            "CALL add_columnstore_policy('\"hourly_avg\"', after => INTERVAL '7 days');"));
+
+        var removed = MigrationSqlHelper.GenerateSql(Cagg(true), Cagg(false));
+        Assert.Contains(removed, s => s.Contains(
+            "CALL remove_columnstore_policy('\"hourly_avg\"', if_exists => true);"));
+    }
+
+    [Fact]
+    public void Cagg_columnstore_disable_emits_alter_set_false()
+    {
+        Action<ModelBuilder> Cagg(bool columnstore) => mb =>
+        {
+            Hypertable(mb);
+            mb.Entity<HourlyAvg>(e =>
+            {
+                e.HasNoKey();
+                e.Property(x => x.Bucket).HasColumnName("bucket");
+                e.IsContinuousAggregate("hourly_avg", CaggQuery);
+                if (columnstore)
+                {
+                    e.HasColumnstore(cs => cs.OrderByDescending(x => x.Bucket));
+                }
+            });
+        };
+
+        var sql = MigrationSqlHelper.GenerateSql(Cagg(true), Cagg(false));
+
+        Assert.Contains(sql, s => s.Contains(
+            "ALTER MATERIALIZED VIEW \"hourly_avg\" SET (timescaledb.enable_columnstore = false);"));
+    }
+
+    [Fact]
+    public void Cagg_refresh_policy_schedule_change_recreates_policy()
+    {
+        Action<ModelBuilder> Cagg(TimeSpan schedule) => mb =>
+        {
+            Hypertable(mb);
+            mb.Entity<HourlyAvg>(e =>
+            {
+                e.HasNoKey();
+                e.Property(x => x.Bucket).HasColumnName("bucket");
+                e.IsContinuousAggregate("hourly_avg", CaggQuery);
+                e.HasRefreshPolicy(TimeSpan.FromDays(3), TimeSpan.FromHours(1), scheduleInterval: schedule);
+            });
+        };
+
+        var sql = MigrationSqlHelper.GenerateSql(Cagg(TimeSpan.FromHours(1)), Cagg(TimeSpan.FromHours(2))).ToList();
+
+        var remove = sql.FindIndex(s => s.Contains("remove_continuous_aggregate_policy"));
+        var add = sql.FindIndex(s => s.Contains("add_continuous_aggregate_policy")
+            && s.Contains("schedule_interval => INTERVAL '02:00:00'"));
+
+        Assert.True(remove >= 0 && add > remove, string.Join("\n---\n", sql));
+    }
+
+    [Fact]
+    public void Job_config_change_deletes_then_re_adds()
+    {
+        Action<ModelBuilder> Model(string config) => mb =>
+        {
+            Hypertable(mb);
+            mb.HasTimescaleDbJob("cleanup", "public.cleanup",
+                scheduleInterval: TimeSpan.FromDays(1), config: config);
+        };
+
+        var sql = MigrationSqlHelper.GenerateSql(
+            Model("""{"drop_after":"30 days"}"""),
+            Model("""{"drop_after":"60 days"}"""));
+
+        Assert.Contains(sql, s => s.Contains("delete_job") && s.Contains("'cleanup'"));
+        Assert.Contains(sql, s => s.Contains("add_job")
+            && s.Contains("""config => '{"drop_after":"60 days"}'::jsonb"""));
+    }
+
+    [Fact]
+    public void Job_reliability_change_deletes_then_re_adds_with_new_value()
+    {
+        Action<ModelBuilder> Model(int retries) => mb =>
+        {
+            Hypertable(mb);
+            mb.HasTimescaleDbJob("cleanup", "public.cleanup",
+                scheduleInterval: TimeSpan.FromDays(1), maxRetries: retries);
+        };
+
+        var sql = MigrationSqlHelper.GenerateSql(Model(3), Model(5));
+
+        Assert.Contains(sql, s => s.Contains("delete_job") && s.Contains("'cleanup'"));
+        Assert.Contains(sql, s => s.Contains("add_job") && s.Contains("max_retries => 5"));
+    }
+
+    [Fact]
+    public void Job_reliability_removed_re_adds_without_reliability_args()
+    {
+        Action<ModelBuilder> withReliability = mb =>
+        {
+            Hypertable(mb);
+            mb.HasTimescaleDbJob("cleanup", "public.cleanup",
+                scheduleInterval: TimeSpan.FromDays(1), maxRuntime: TimeSpan.FromMinutes(5), maxRetries: 3);
+        };
+        Action<ModelBuilder> without = mb =>
+        {
+            Hypertable(mb);
+            mb.HasTimescaleDbJob("cleanup", "public.cleanup", scheduleInterval: TimeSpan.FromDays(1));
+        };
+
+        var sql = MigrationSqlHelper.GenerateSql(withReliability, without);
+
+        var add = Assert.Single(sql, s => s.Contains("add_job"));
+        Assert.DoesNotContain("max_runtime", add);
+        Assert.DoesNotContain("max_retries", add);
+    }
+
+    [Fact]
     public void No_extension_for_plain_model()
     {
         var sql = MigrationSqlHelper.GenerateSql(mb => mb.Entity<Reading>(e =>

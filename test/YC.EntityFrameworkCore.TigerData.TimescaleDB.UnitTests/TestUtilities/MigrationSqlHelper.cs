@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
+using YC.EntityFrameworkCore.TigerData.TimescaleDB.Infrastructure;
 
 namespace YC.EntityFrameworkCore.TigerData.TimescaleDB.UnitTests.TestUtilities;
 
@@ -17,12 +18,14 @@ public static class MigrationSqlHelper
         public object Create(DbContext context, bool designTime) => new();
     }
 
-    private sealed class TestContext(Action<ModelBuilder> configure) : DbContext
+    private sealed class TestContext(
+        Action<ModelBuilder> configure,
+        Action<TimescaleDbDbContextOptionsBuilder>? configureOptions = null) : DbContext
     {
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
             => optionsBuilder
                 .UseNpgsql("Host=localhost;Database=unit_test_only")
-                .UseTimescaleDb()
+                .UseTimescaleDb(configureOptions)
                 .ReplaceService<IModelCacheKeyFactory, NeverCachingModelCacheKeyFactory>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -32,9 +35,10 @@ public static class MigrationSqlHelper
     /// <summary>Operations produced by diffing <paramref name="source" /> → <paramref name="target" />.</summary>
     public static IReadOnlyList<MigrationOperation> Diff(
         Action<ModelBuilder>? source,
-        Action<ModelBuilder> target)
+        Action<ModelBuilder> target,
+        Action<TimescaleDbDbContextOptionsBuilder>? configureOptions = null)
     {
-        using var context = new TestContext(target);
+        using var context = new TestContext(target, configureOptions);
 
         var differ = context.GetService<IMigrationsModelDiffer>();
         var designTimeModel = context.GetService<IDesignTimeModel>().Model;
@@ -42,7 +46,7 @@ public static class MigrationSqlHelper
         IRelationalModel? sourceModel = null;
         if (source is not null)
         {
-            using var sourceContext = new TestContext(source);
+            using var sourceContext = new TestContext(source, configureOptions);
             sourceModel = sourceContext.GetService<IDesignTimeModel>().Model.GetRelationalModel();
 
             return differ.GetDifferences(sourceModel, designTimeModel.GetRelationalModel());
@@ -58,11 +62,12 @@ public static class MigrationSqlHelper
     /// <summary>SQL commands for the migration <paramref name="source" /> → <paramref name="target" />.</summary>
     public static IReadOnlyList<string> GenerateSql(
         Action<ModelBuilder>? source,
-        Action<ModelBuilder> target)
+        Action<ModelBuilder> target,
+        Action<TimescaleDbDbContextOptionsBuilder>? configureOptions = null)
     {
-        using var context = new TestContext(target);
+        using var context = new TestContext(target, configureOptions);
 
-        var operations = Diff(source, target);
+        var operations = Diff(source, target, configureOptions);
         var generator = context.GetService<IMigrationsSqlGenerator>();
         var designTimeModel = context.GetService<IDesignTimeModel>().Model;
 

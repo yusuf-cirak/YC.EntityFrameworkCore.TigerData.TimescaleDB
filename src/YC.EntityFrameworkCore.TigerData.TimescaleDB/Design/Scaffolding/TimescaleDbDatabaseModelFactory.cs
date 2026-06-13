@@ -66,8 +66,34 @@ public class TimescaleDbDatabaseModelFactory : IDatabaseModelFactory
         }
 
         EnrichHypertables(model, connection);
+        EnrichTablespaces(model, connection);
         EnrichColumnstoreSettings(model, connection);
         EnrichPoliciesAndJobs(model, connection);
+    }
+
+    private static void EnrichTablespaces(DatabaseModel model, DbConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT hypertable_schema, hypertable_name, unnest(tablespaces) AS tablespace
+            FROM timescaledb_information.hypertables
+            WHERE tablespaces IS NOT NULL
+            """;
+
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            var table = FindTable(model, reader.GetString(0), reader.GetString(1));
+            if (table is null)
+            {
+                continue;
+            }
+
+            var name = reader.GetString(2);
+            table[TimescaleDbAnnotationNames.Tablespaces] =
+                table[TimescaleDbAnnotationNames.Tablespaces] is string existing ? $"{existing}, {name}" : name;
+        }
     }
 
     private static bool TimescaleDbInstalled(DbConnection connection)
@@ -122,13 +148,13 @@ public class TimescaleDbDatabaseModelFactory : IDatabaseModelFactory
                     table[TimescaleDbAnnotationNames.IntegerNowFunction] = reader.GetString(7);
                 }
             }
-            else
+            else if (!reader.IsDBNull(6))
             {
-                table[TimescaleDbAnnotationNames.SpacePartitionColumn] = column;
-                if (!reader.IsDBNull(6))
-                {
-                    table[TimescaleDbAnnotationNames.SpacePartitions] = (int)reader.GetInt16(6);
-                }
+                var item = $"{column}:{(int)reader.GetInt16(6)}";
+                table[TimescaleDbAnnotationNames.SpaceDimensions] =
+                    table[TimescaleDbAnnotationNames.SpaceDimensions] is string existing
+                        ? $"{existing}, {item}"
+                        : item;
             }
         }
     }
@@ -180,7 +206,8 @@ public class TimescaleDbDatabaseModelFactory : IDatabaseModelFactory
         command.CommandText =
             """
             SELECT application_name, proc_name, schedule_interval::text, config::text,
-                   hypertable_schema, hypertable_name
+                   hypertable_schema, hypertable_name,
+                   max_runtime::text, max_retries, retry_period::text
             FROM timescaledb_information.jobs
             """;
 
@@ -256,6 +283,9 @@ public class TimescaleDbDatabaseModelFactory : IDatabaseModelFactory
                             Procedure = procName,
                             ScheduleInterval = scheduleInterval,
                             Config = configJson,
+                            MaxRuntime = reader.IsDBNull(6) ? null : reader.GetString(6),
+                            MaxRetries = reader.IsDBNull(7) ? null : reader.GetInt32(7),
+                            RetryPeriod = reader.IsDBNull(8) ? null : reader.GetString(8),
                         });
                     }
 

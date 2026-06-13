@@ -35,6 +35,28 @@ public sealed class TimescaleDbContainerFixture : IAsyncLifetime
         return new NpgsqlConnectionStringBuilder(ConnectionString) { Database = name }.ConnectionString;
     }
 
+    /// <summary>
+    ///     Creates a cluster-wide tablespace backed by a fresh directory inside the container, or
+    ///     returns false when the directory can't be prepared (then the caller skips the assertion).
+    /// </summary>
+    public async Task<bool> TryCreateTablespaceAsync(string name, CancellationToken cancellationToken)
+    {
+        var path = $"/var/lib/postgresql/{name}";
+        var mkdir = await _container.ExecAsync(["mkdir", "-p", path], cancellationToken);
+        await _container.ExecAsync(["chown", "postgres:postgres", path], cancellationToken);
+        if (mkdir.ExitCode != 0)
+        {
+            return false;
+        }
+
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"CREATE TABLESPACE {name} LOCATION '{path}'";
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        return true;
+    }
+
     public async ValueTask DisposeAsync()
         => await _container.DisposeAsync();
 }

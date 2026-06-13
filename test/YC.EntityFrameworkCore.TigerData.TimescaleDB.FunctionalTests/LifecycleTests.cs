@@ -266,6 +266,148 @@ public class LifecycleTests(TimescaleDbContainerFixture fixture)
         Assert.Empty(sql);
     }
 
+    [Fact]
+    public async Task Reorder_policy_added_then_removed()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var cs = await fixture.CreateDatabaseAsync(ct);
+
+        var withReorder = Hypertable(e =>
+        {
+            e.HasIndex(x => x.Time);
+            e.HasReorderPolicy(x => x.Time);
+        });
+        var indexOnly = Hypertable(e => e.HasIndex(x => x.Time));
+
+        await DiffExecutor.ApplyAsync(cs, null, withReorder, ct);
+        Assert.Equal(1L, await ScalarAsync(cs,
+            "SELECT count(*) FROM timescaledb_information.jobs "
+            + "WHERE proc_name = 'policy_reorder' AND hypertable_name = 'metrics'", ct));
+
+        await DiffExecutor.ApplyAsync(cs, withReorder, indexOnly, ct);
+        Assert.Equal(0L, await ScalarAsync(cs,
+            "SELECT count(*) FROM timescaledb_information.jobs "
+            + "WHERE proc_name = 'policy_reorder' AND hypertable_name = 'metrics'", ct));
+    }
+
+    [Fact]
+    public async Task Retention_policy_replaced_keeps_single_policy()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var cs = await fixture.CreateDatabaseAsync(ct);
+
+        var ninety = Hypertable(e => e.HasRetentionPolicy(dropAfter: TimeSpan.FromDays(90)));
+        var thirty = Hypertable(e => e.HasRetentionPolicy(dropAfter: TimeSpan.FromDays(30)));
+
+        await DiffExecutor.ApplyAsync(cs, null, ninety, ct);
+        await DiffExecutor.ApplyAsync(cs, ninety, thirty, ct);
+
+        // Replace = remove + add → still exactly one retention job, now dropping after 30 days.
+        Assert.Equal(1L, await ScalarAsync(cs,
+            "SELECT count(*) FROM timescaledb_information.jobs "
+            + "WHERE proc_name = 'policy_retention' AND hypertable_name = 'metrics'", ct));
+        Assert.Equal("30 days", await ScalarAsync(cs,
+            "SELECT (config->>'drop_after') FROM timescaledb_information.jobs "
+            + "WHERE proc_name = 'policy_retention' AND hypertable_name = 'metrics'", ct));
+    }
+
+    [Fact]
+    public async Task Columnstore_policy_added_then_removed_in_isolation()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var cs = await fixture.CreateDatabaseAsync(ct);
+
+        var enabled = Hypertable(e => e.HasColumnstore(c => c.SegmentBy(x => x.Source).OrderByDescending(x => x.Time)));
+        var withPolicy = Hypertable(e =>
+        {
+            e.HasColumnstore(c => c.SegmentBy(x => x.Source).OrderByDescending(x => x.Time));
+            e.HasColumnstorePolicy(after: TimeSpan.FromDays(7));
+        });
+
+        await DiffExecutor.ApplyAsync(cs, null, enabled, ct);
+        await DiffExecutor.ApplyAsync(cs, enabled, withPolicy, ct);
+        Assert.Equal(1L, await ScalarAsync(cs,
+            "SELECT count(*) FROM timescaledb_information.jobs "
+            + "WHERE proc_name IN ('policy_compression', 'policy_columnstore') AND hypertable_name = 'metrics'", ct));
+
+        // Removing only the policy must not disable the columnstore.
+        await DiffExecutor.ApplyAsync(cs, withPolicy, enabled, ct);
+        Assert.Equal(0L, await ScalarAsync(cs,
+            "SELECT count(*) FROM timescaledb_information.jobs "
+            + "WHERE proc_name IN ('policy_compression', 'policy_columnstore') AND hypertable_name = 'metrics'", ct));
+        Assert.Equal("s", await ScalarAsync(cs,
+            "SELECT CASE WHEN compression_enabled THEN 's' ELSE 'n' END "
+            + "FROM timescaledb_information.hypertables WHERE hypertable_name = 'metrics'", ct));
+    }
+
+    [Fact]
+    public async Task Job_config_change_is_applied()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var cs = await fixture.CreateDatabaseAsync(ct);
+
+        await ExecuteAsync(cs,
+            "CREATE PROCEDURE public.cleanup(job_id int, config jsonb) LANGUAGE plpgsql AS $$ BEGIN END $$;", ct);
+
+        Action<ModelBuilder> Model(string config) => mb =>
+        {
+            Hypertable()(mb);
+            mb.HasTimescaleDbJob("cleanup", "public.cleanup", scheduleInterval: TimeSpan.FromDays(1), config: config);
+        };
+
+        await DiffExecutor.ApplyAsync(cs, null, Model("""{"drop_after":"30 days"}"""), ct);
+        await DiffExecutor.ApplyAsync(cs,
+            Model("""{"drop_after":"30 days"}"""), Model("""{"drop_after":"60 days"}"""), ct);
+
+        Assert.Equal(1L, await ScalarAsync(cs,
+            "SELECT count(*) FROM timescaledb_information.jobs WHERE application_name LIKE 'cleanup%'", ct));
+        Assert.Equal("60 days", await ScalarAsync(cs,
+            "SELECT (config->>'drop_after') FROM timescaledb_information.jobs "
+            + "WHERE application_name LIKE 'cleanup%'", ct));
+    }
+
+    private class Series
+    {
+        public DateTimeOffset Time { get; set; }
+        public long Reading { get; set; }
+    }
+
+    [Fact]
+    public async Task Chunk_skipping_enabled_then_disabled()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var cs = await fixture.CreateDatabaseAsync(ct);
+
+        Action<ModelBuilder> Model(bool skip) => mb => mb.Entity<Series>(e =>
+        {
+            e.HasNoKey();
+            e.ToTable("series");
+            e.Property(x => x.Time).HasColumnName("time");
+            e.Property(x => x.Reading).HasColumnName("reading");
+            e.IsHypertable(x => x.Time, chunkInterval: TimeSpan.FromDays(1));
+            if (skip)
+            {
+                e.HasChunkSkipping(x => x.Reading);
+            }
+        });
+
+        await DiffExecutor.ApplyAsync(cs, null, Model(false), ct);
+
+        // Enable then disable must both succeed — the engine first turns on the
+        // timescaledb.enable_chunk_skipping GUC, which the feature requires.
+        await DiffExecutor.ApplyAsync(cs, Model(false), Model(true), ct);
+        Assert.Equal(1L, await ScalarAsync(cs,
+            "SELECT count(*) FROM _timescaledb_catalog.chunk_column_stats s "
+            + "JOIN _timescaledb_catalog.hypertable h ON h.id = s.hypertable_id "
+            + "WHERE h.table_name = 'series' AND s.column_name = 'reading'", ct));
+
+        await DiffExecutor.ApplyAsync(cs, Model(true), Model(false), ct);
+        Assert.Equal(0L, await ScalarAsync(cs,
+            "SELECT count(*) FROM _timescaledb_catalog.chunk_column_stats s "
+            + "JOIN _timescaledb_catalog.hypertable h ON h.id = s.hypertable_id "
+            + "WHERE h.table_name = 'series' AND s.column_name = 'reading'", ct));
+    }
+
     private class IntegerSeries
     {
         public long UnixSeconds { get; set; }

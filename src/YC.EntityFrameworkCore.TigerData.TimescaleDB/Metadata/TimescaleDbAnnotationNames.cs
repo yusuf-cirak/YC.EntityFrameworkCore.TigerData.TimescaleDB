@@ -14,10 +14,14 @@ public static class TimescaleDbAnnotationNames
     public const string PartitionColumn = Prefix + "Hypertable:PartitionColumn";
     public const string ChunkInterval = Prefix + "Hypertable:ChunkInterval";
     public const string CreateDefaultIndexes = Prefix + "Hypertable:CreateDefaultIndexes";
-    public const string SpacePartitionColumn = Prefix + "Hypertable:SpacePartitionColumn";
-    public const string SpacePartitions = Prefix + "Hypertable:SpacePartitions";
+
+    /// <summary>Ordered <c>column:partitions</c> list of hash (space) dimensions, e.g. <c>"device_id:4, region:8"</c>.</summary>
+    public const string SpaceDimensions = Prefix + "Hypertable:SpaceDimensions";
     public const string IntegerNowFunction = Prefix + "Hypertable:IntegerNowFunction";
     public const string ChunkSkippingColumns = Prefix + "Hypertable:ChunkSkippingColumns";
+
+    /// <summary>Comma-joined tablespace names attached to the hypertable.</summary>
+    public const string Tablespaces = Prefix + "Hypertable:Tablespaces";
 
     // Columnstore / compression (entity type)
     public const string ColumnstoreEnabled = Prefix + "Columnstore:Enabled";
@@ -52,6 +56,12 @@ public static class TimescaleDbAnnotationNames
     // Jobs (model level; JSON-serialized array of job definitions)
     public const string Jobs = Prefix + "Jobs";
 
+    // Migration behavior toggles (entity type; default true). Govern the automatic, data-heavy
+    // operations the engine injects during transitions.
+    public const string MigrateData = Prefix + "Migration:MigrateData";
+    public const string RebuildData = Prefix + "Migration:RebuildData";
+    public const string AutoDecompress = Prefix + "Migration:AutoDecompress";
+
     /// <summary>
     ///     The hypertable/table-attached annotations the relational annotation provider projects
     ///     onto the table, so EF emits them on <c>CreateTableOperation</c>/<c>AlterTableOperation</c>
@@ -63,10 +73,10 @@ public static class TimescaleDbAnnotationNames
         PartitionColumn,
         ChunkInterval,
         CreateDefaultIndexes,
-        SpacePartitionColumn,
-        SpacePartitions,
+        SpaceDimensions,
         IntegerNowFunction,
         ChunkSkippingColumns,
+        Tablespaces,
         ColumnstoreEnabled,
         ColumnstoreSegmentBy,
         ColumnstoreOrderBy,
@@ -79,6 +89,20 @@ public static class TimescaleDbAnnotationNames
         RetentionPolicyScheduleInterval,
         RetentionPolicyInitialStart,
         RetentionPolicyTimezone,
-        ReorderPolicyIndex,
+        // ReorderPolicyIndex is intentionally NOT projected onto the table: the reorder policy must be
+        // added after EF's CreateIndexOperation (which runs after the table), so it is emitted as a
+        // SqlOperation by the model differ instead. See TimescaleDbMigrationsModelDiffer.DiffReorderPolicy.
+    ];
+
+    /// <summary>
+    ///     Migration behavior toggles, projected onto the table for **any** mapped entity (not only
+    ///     hypertables) — the generator must see, e.g., <see cref="RebuildData" /> on a table that is
+    ///     becoming a plain table (hypertable→plain). Default true when absent.
+    /// </summary>
+    public static readonly string[] MigrationToggles =
+    [
+        MigrateData,
+        RebuildData,
+        AutoDecompress,
     ];
 }

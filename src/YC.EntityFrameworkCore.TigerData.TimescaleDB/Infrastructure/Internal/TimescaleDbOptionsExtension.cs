@@ -19,12 +19,26 @@ public class TimescaleDbOptionsExtension : IDbContextOptionsExtension
     /// </summary>
     public virtual bool CreateExtension { get; private set; } = true;
 
+    /// <summary>Model-wide default for <c>WithMigrateData</c> (per-entity overrides win). Default true.</summary>
+    public virtual bool MigrateData { get; private set; } = true;
+
+    /// <summary>Model-wide default for <c>WithRebuildData</c> (per-entity overrides win). Default true.</summary>
+    public virtual bool RebuildData { get; private set; } = true;
+
+    /// <summary>Model-wide default for <c>WithAutoDecompress</c> (per-entity overrides win). Default true.</summary>
+    public virtual bool AutoDecompress { get; private set; } = true;
+
     public TimescaleDbOptionsExtension()
     {
     }
 
     protected TimescaleDbOptionsExtension(TimescaleDbOptionsExtension copyFrom)
-        => CreateExtension = copyFrom.CreateExtension;
+    {
+        CreateExtension = copyFrom.CreateExtension;
+        MigrateData = copyFrom.MigrateData;
+        RebuildData = copyFrom.RebuildData;
+        AutoDecompress = copyFrom.AutoDecompress;
+    }
 
     public virtual DbContextOptionsExtensionInfo Info
         => _info ??= new ExtensionInfo(this);
@@ -36,6 +50,27 @@ public class TimescaleDbOptionsExtension : IDbContextOptionsExtension
     {
         var clone = Clone();
         clone.CreateExtension = createExtension;
+        return clone;
+    }
+
+    public virtual TimescaleDbOptionsExtension WithMigrateData(bool migrateData)
+    {
+        var clone = Clone();
+        clone.MigrateData = migrateData;
+        return clone;
+    }
+
+    public virtual TimescaleDbOptionsExtension WithRebuildData(bool rebuildData)
+    {
+        var clone = Clone();
+        clone.RebuildData = rebuildData;
+        return clone;
+    }
+
+    public virtual TimescaleDbOptionsExtension WithAutoDecompress(bool autoDecompress)
+    {
+        var clone = Clone();
+        clone.AutoDecompress = autoDecompress;
         return clone;
     }
 
@@ -64,13 +99,22 @@ public class TimescaleDbOptionsExtension : IDbContextOptionsExtension
             => "using TimescaleDB ";
 
         public override int GetServiceProviderHashCode()
-            => Extension.CreateExtension.GetHashCode();
+            => HashCode.Combine(
+                Extension.CreateExtension, Extension.MigrateData, Extension.RebuildData, Extension.AutoDecompress);
 
         public override bool ShouldUseSameServiceProvider(DbContextOptionsExtensionInfo other)
             => other is ExtensionInfo otherInfo
-                && Extension.CreateExtension == otherInfo.Extension.CreateExtension;
+                && Extension.CreateExtension == otherInfo.Extension.CreateExtension
+                && Extension.MigrateData == otherInfo.Extension.MigrateData
+                && Extension.RebuildData == otherInfo.Extension.RebuildData
+                && Extension.AutoDecompress == otherInfo.Extension.AutoDecompress;
 
         public override void PopulateDebugInfo(IDictionary<string, string> debugInfo)
-            => debugInfo["TimescaleDb:CreateExtension"] = Extension.CreateExtension.ToString();
+        {
+            debugInfo["TimescaleDb:CreateExtension"] = Extension.CreateExtension.ToString();
+            debugInfo["TimescaleDb:MigrateData"] = Extension.MigrateData.ToString();
+            debugInfo["TimescaleDb:RebuildData"] = Extension.RebuildData.ToString();
+            debugInfo["TimescaleDb:AutoDecompress"] = Extension.AutoDecompress.ToString();
+        }
     }
 }

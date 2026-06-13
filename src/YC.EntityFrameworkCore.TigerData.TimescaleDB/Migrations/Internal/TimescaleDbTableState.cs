@@ -9,6 +9,9 @@ public sealed record PolicyState(string? Main, string? Schedule, string? Initial
     public bool Exists => Main is not null;
 }
 
+/// <summary>A hash (space) partition dimension.</summary>
+public sealed record SpaceDimension(string Column, int Partitions);
+
 /// <summary>
 ///     The TimescaleDB state of a table, read from the annotations EF attaches to a
 ///     <c>CreateTableOperation</c> / <c>AlterTableOperation</c> (and its <c>OldTable</c>).
@@ -19,8 +22,8 @@ public sealed record TimescaleDbTableState(
     string? PartitionColumn,
     string? ChunkInterval,
     bool CreateDefaultIndexes,
-    string? SpaceColumn,
-    int? SpacePartitions,
+    IReadOnlyList<SpaceDimension> SpaceDimensions,
+    IReadOnlyList<string> Tablespaces,
     string? IntegerNowFunction,
     string[] ChunkSkipping,
     bool Columnstore,
@@ -29,11 +32,23 @@ public sealed record TimescaleDbTableState(
     string? MergeInterval,
     PolicyState Retention,
     PolicyState ColumnstorePolicy,
-    string? ReorderIndex)
+    string? ReorderIndex,
+    bool MigrateData,
+    bool RebuildData,
+    bool AutoDecompress)
 {
-    public static TimescaleDbTableState Read(IReadOnlyAnnotatable source)
+    /// <summary>
+    ///     Reads the table state. The migration-behavior toggles fall back to the supplied model-wide
+    ///     defaults (from <c>UseTimescaleDb(...)</c>) when the entity does not set them explicitly.
+    /// </summary>
+    public static TimescaleDbTableState Read(
+        IReadOnlyAnnotatable source,
+        bool migrateDataDefault = true,
+        bool rebuildDataDefault = true,
+        bool autoDecompressDefault = true)
     {
         string? S(string name) => source.FindAnnotation(name)?.Value as string;
+        bool B(string name, bool fallback) => source.FindAnnotation(name)?.Value as bool? ?? fallback;
 
         return new TimescaleDbTableState(
             IsHypertable: source.FindAnnotation(TimescaleDbAnnotationNames.IsHypertable)?.Value is true,
@@ -41,8 +56,10 @@ public sealed record TimescaleDbTableState(
             ChunkInterval: S(TimescaleDbAnnotationNames.ChunkInterval),
             CreateDefaultIndexes:
                 source.FindAnnotation(TimescaleDbAnnotationNames.CreateDefaultIndexes)?.Value as bool? ?? true,
-            SpaceColumn: S(TimescaleDbAnnotationNames.SpacePartitionColumn),
-            SpacePartitions: source.FindAnnotation(TimescaleDbAnnotationNames.SpacePartitions)?.Value as int?,
+            SpaceDimensions: ParseDimensions(S(TimescaleDbAnnotationNames.SpaceDimensions)),
+            Tablespaces: S(TimescaleDbAnnotationNames.Tablespaces)
+                    ?.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                ?? [],
             IntegerNowFunction: S(TimescaleDbAnnotationNames.IntegerNowFunction),
             ChunkSkipping: S(TimescaleDbAnnotationNames.ChunkSkippingColumns)
                     ?.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
@@ -61,10 +78,32 @@ public sealed record TimescaleDbTableState(
                 S(TimescaleDbAnnotationNames.ColumnstorePolicyScheduleInterval),
                 S(TimescaleDbAnnotationNames.ColumnstorePolicyInitialStart),
                 S(TimescaleDbAnnotationNames.ColumnstorePolicyTimezone)),
-            ReorderIndex: S(TimescaleDbAnnotationNames.ReorderPolicyIndex));
+            ReorderIndex: S(TimescaleDbAnnotationNames.ReorderPolicyIndex),
+            MigrateData: B(TimescaleDbAnnotationNames.MigrateData, migrateDataDefault),
+            RebuildData: B(TimescaleDbAnnotationNames.RebuildData, rebuildDataDefault),
+            AutoDecompress: B(TimescaleDbAnnotationNames.AutoDecompress, autoDecompressDefault));
     }
 
     /// <summary>Columnstore layout changed (segmentby / orderby / merge interval) while staying enabled.</summary>
     public bool ColumnstoreLayoutDiffers(TimescaleDbTableState other)
         => SegmentBy != other.SegmentBy || OrderBy != other.OrderBy || MergeInterval != other.MergeInterval;
+
+    private static IReadOnlyList<SpaceDimension> ParseDimensions(string? value)
+    {
+        if (value is null)
+        {
+            return [];
+        }
+
+        var result = new List<SpaceDimension>();
+        foreach (var item in value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = item.Split(':', 2);
+            result.Add(new SpaceDimension(
+                parts[0].Trim(),
+                int.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture)));
+        }
+
+        return result;
+    }
 }

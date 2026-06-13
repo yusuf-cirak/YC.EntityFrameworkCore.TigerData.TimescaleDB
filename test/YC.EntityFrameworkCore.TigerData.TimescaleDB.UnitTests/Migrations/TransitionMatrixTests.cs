@@ -110,6 +110,91 @@ public class TransitionMatrixTests
         Assert.Contains(sql, s => s.Contains("SELECT disable_chunk_skipping('\"readings\"', 'value');"));
     }
 
+    [Fact]
+    public void Chunk_skipping_isolated_disable_emits_only_disable()
+    {
+        var sql = MigrationSqlHelper.GenerateSql(
+            Hypertable(e => e.HasChunkSkipping(x => x.Value)),
+            Hypertable());
+
+        Assert.Contains(sql, s => s.Contains("SELECT disable_chunk_skipping('\"readings\"', 'value');"));
+        Assert.DoesNotContain(sql, s => s.Contains("SELECT enable_chunk_skipping("));
+        Assert.DoesNotContain(sql, s => s.Contains("__ts_rebuild"));
+    }
+
+    [Fact]
+    public void Columnstore_orderby_change_emits_alter_set_without_decompress()
+    {
+        var sql = MigrationSqlHelper.GenerateSql(
+            Hypertable(e => e.HasColumnstore(cs => cs.SegmentBy(x => x.DeviceId).OrderByDescending(x => x.Time))),
+            Hypertable(e => e.HasColumnstore(cs => cs.SegmentBy(x => x.DeviceId).OrderBy(x => x.Value))));
+
+        Assert.Contains(sql, s => s.Contains("timescaledb.orderby = 'value'"));
+        Assert.DoesNotContain(sql, s => s.Contains("convert_to_rowstore"));
+        Assert.DoesNotContain(sql, s => s.Contains("__ts_rebuild"));
+    }
+
+    [Fact]
+    public void Second_tablespace_attached_in_place()
+    {
+        var sql = MigrationSqlHelper.GenerateSql(
+            Hypertable(e => e.HasTablespace(new Tablespace("ts1"))),
+            Hypertable(e =>
+            {
+                e.HasTablespace(new Tablespace("ts1"));
+                e.HasTablespace(new Tablespace("ts2"));
+            }));
+
+        Assert.Contains(sql, s => s.Contains("attach_tablespace('ts2', '\"readings\"', if_not_attached => true);"));
+        Assert.DoesNotContain(sql, s => s.Contains("'ts1'")); // ts1 already attached → untouched
+        Assert.DoesNotContain(sql, s => s.Contains("detach_tablespace"));
+        Assert.DoesNotContain(sql, s => s.Contains("__ts_rebuild"));
+    }
+
+    [Fact]
+    public void Middle_tablespace_detached_in_place()
+    {
+        Action<EntityTypeBuilder<Reading>> All(params string[] names) => e =>
+        {
+            foreach (var name in names)
+            {
+                e.HasTablespace(new Tablespace(name));
+            }
+        };
+
+        var sql = MigrationSqlHelper.GenerateSql(
+            Hypertable(All("ts1", "ts2", "ts3")),
+            Hypertable(All("ts1", "ts3")));
+
+        Assert.Contains(sql, s => s.Contains("detach_tablespace('ts2', '\"readings\"', if_attached => true);"));
+        Assert.DoesNotContain(sql, s => s.Contains("'ts1'") || s.Contains("'ts3'"));
+        Assert.DoesNotContain(sql, s => s.Contains("__ts_rebuild"));
+    }
+
+    [Fact]
+    public void Integer_now_function_change_sets_new_function()
+    {
+        Action<ModelBuilder> Model(string fn) => mb => mb.Entity<Epoch>(e =>
+        {
+            e.HasNoKey();
+            e.ToTable("epochs");
+            e.Property(x => x.Ts).HasColumnName("ts");
+            e.Property(x => x.Value).HasColumnName("value");
+            e.IsHypertableByInteger(x => x.Ts, 86_400, integerNowFunction: fn);
+        });
+
+        var sql = MigrationSqlHelper.GenerateSql(Model("now_v1"), Model("now_v2"));
+
+        Assert.Contains(sql, s => s.Contains("SELECT set_integer_now_func('\"epochs\"', 'now_v2');"));
+        Assert.DoesNotContain(sql, s => s.Contains("__ts_rebuild"));
+    }
+
+    private class Epoch
+    {
+        public long Ts { get; set; }
+        public double Value { get; set; }
+    }
+
     // ---------------------------------------------------------------- reversals (no rebuild)
 
     [Fact]

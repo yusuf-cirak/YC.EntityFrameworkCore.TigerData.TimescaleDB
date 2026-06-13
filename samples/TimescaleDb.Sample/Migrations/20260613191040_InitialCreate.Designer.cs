@@ -12,8 +12,8 @@ using TimescaleDb.Sample;
 namespace TimescaleDb.Sample.Migrations
 {
     [DbContext(typeof(MetricsContext))]
-    [Migration("20260613184346_NoChange")]
-    partial class NoChange
+    [Migration("20260613191040_InitialCreate")]
+    partial class InitialCreate
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)

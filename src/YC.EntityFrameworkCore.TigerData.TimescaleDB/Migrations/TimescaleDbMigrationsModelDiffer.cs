@@ -57,6 +57,7 @@ public class TimescaleDbMigrationsModelDiffer : MigrationsModelDiffer
 
         DiffContinuousAggregates(sourceModel, targetModel, pre, post);
         DiffJobs(sourceModel, targetModel, post);
+        DiffReorderPolicy(sourceModel, targetModel, pre, post);
 
         if (_createExtension && UsesTimescaleDb(targetModel) && !UsesTimescaleDb(sourceModel))
         {
@@ -76,54 +77,157 @@ public class TimescaleDbMigrationsModelDiffer : MigrationsModelDiffer
         List<MigrationOperation> pre,
         List<MigrationOperation> post)
     {
-        var sourceAggregates = IndexByView(sourceModel);
-        var targetAggregates = IndexByView(targetModel);
+        var source = IndexByView(sourceModel);
+        var target = IndexByView(targetModel);
 
-        foreach (var ((schema, view), _) in sourceAggregates)
+        // Dependency graph over the union (target entity preferred): A → B when A's query reads B's view.
+        // Built over the union so drops of source-only caggs are ordered too.
+        var all = new Dictionary<(string? Schema, string Name), IEntityType>(source);
+        foreach (var (key, entity) in target)
         {
-            if (!targetAggregates.ContainsKey((schema, view)))
+            all[key] = entity;
+        }
+
+        var deps = BuildCaggDependencies(all);
+
+        // A cagg is recreated if its query/chunk changed, OR (cascade) any cagg it depends on is recreated.
+        var recreated = new HashSet<(string?, string)>();
+        foreach (var (key, entity) in target)
+        {
+            if (source.TryGetValue(key, out var src)
+                && (A(src, TimescaleDbAnnotationNames.ContinuousAggregateQuery) != Query(entity)
+                    || A(src, TimescaleDbAnnotationNames.ContinuousAggregateChunkInterval)
+                        != A(entity, TimescaleDbAnnotationNames.ContinuousAggregateChunkInterval)))
             {
-                pre.Add(Sql(TimescaleDbSql.DropContinuousAggregate(view, schema)));
+                recreated.Add(key);
             }
         }
 
-        foreach (var ((schema, view), entity) in targetAggregates)
+        for (var changed = true; changed;)
         {
-            sourceAggregates.TryGetValue((schema, view), out var sourceEntity);
-
-            var query = (string)entity.FindAnnotation(TimescaleDbAnnotationNames.ContinuousAggregateQuery)!.Value!;
-            var materializedOnly = Bool(entity, TimescaleDbAnnotationNames.ContinuousAggregateMaterializedOnly, true);
-            var withNoData = Bool(entity, TimescaleDbAnnotationNames.ContinuousAggregateWithNoData, true);
-            var chunkInterval = A(entity, TimescaleDbAnnotationNames.ContinuousAggregateChunkInterval);
-
-            var sourceQuery = A(sourceEntity, TimescaleDbAnnotationNames.ContinuousAggregateQuery);
-            var sourceMaterializedOnly = Bool(sourceEntity, TimescaleDbAnnotationNames.ContinuousAggregateMaterializedOnly, true);
-            var sourceChunkInterval = A(sourceEntity, TimescaleDbAnnotationNames.ContinuousAggregateChunkInterval);
-
-            var recreated = sourceEntity is not null
-                && (sourceQuery != query || sourceChunkInterval != chunkInterval);
-
-            if (sourceEntity is null || recreated)
+            changed = false;
+            foreach (var (key, dependsOn) in deps)
             {
-                if (recreated)
+                if (source.ContainsKey(key) && !recreated.Contains(key) && dependsOn.Any(recreated.Contains))
                 {
-                    pre.Add(Sql(TimescaleDbSql.DropContinuousAggregate(view, schema)));
+                    recreated.Add(key);
+                    changed = true;
                 }
-
-                post.Add(Sql(TimescaleDbSql.CreateContinuousAggregate(
-                    view, schema, query, materializedOnly, withNoData, chunkInterval)));
             }
-            else if (sourceMaterializedOnly != materializedOnly)
+        }
+
+        var createKeys = target.Keys.Where(k => !source.ContainsKey(k) || recreated.Contains(k)).ToHashSet();
+        var dropKeys = source.Keys.Where(k => !target.ContainsKey(k) || recreated.Contains(k)).ToList();
+
+        // Drop dependents before their sources; create sources before their dependents.
+        var dropOrdered = TopoSortCaggs(dropKeys, deps);
+        dropOrdered.Reverse();
+        foreach (var (schema, view) in dropOrdered)
+        {
+            pre.Add(Sql(TimescaleDbSql.DropContinuousAggregate(view, schema)));
+        }
+
+        foreach (var (schema, view) in TopoSortCaggs(createKeys.ToList(), deps))
+        {
+            var entity = target[(schema, view)];
+            post.Add(Sql(TimescaleDbSql.CreateContinuousAggregate(
+                view, schema, Query(entity),
+                Bool(entity, TimescaleDbAnnotationNames.ContinuousAggregateMaterializedOnly, true),
+                Bool(entity, TimescaleDbAnnotationNames.ContinuousAggregateWithNoData, true),
+                A(entity, TimescaleDbAnnotationNames.ContinuousAggregateChunkInterval))));
+        }
+
+        // Per-cagg settings: run after every create so the relation exists.
+        foreach (var (key, entity) in target)
+        {
+            var (schema, view) = key;
+            var isCreate = createKeys.Contains(key);
+            source.TryGetValue(key, out var sourceEntity);
+
+            if (!isCreate
+                && Bool(sourceEntity, TimescaleDbAnnotationNames.ContinuousAggregateMaterializedOnly, true)
+                    != Bool(entity, TimescaleDbAnnotationNames.ContinuousAggregateMaterializedOnly, true))
             {
-                post.Add(Sql(TimescaleDbSql.AlterContinuousAggregateMaterializedOnly(view, schema, materializedOnly)));
+                post.Add(Sql(TimescaleDbSql.AlterContinuousAggregateMaterializedOnly(
+                    view, schema, Bool(entity, TimescaleDbAnnotationNames.ContinuousAggregateMaterializedOnly, true))));
             }
 
-            var effectiveSource = recreated ? null : sourceEntity;
-
+            var effectiveSource = isCreate ? null : sourceEntity;
             DiffCaggColumnstore(effectiveSource, entity, view, schema, post);
             DiffRefreshPolicy(effectiveSource, entity, view, schema, post);
             DiffCaggPolicies(effectiveSource, entity, view, schema, post);
         }
+    }
+
+    private static string Query(IEntityType entity)
+        => (string)entity.FindAnnotation(TimescaleDbAnnotationNames.ContinuousAggregateQuery)!.Value!;
+
+    private static Dictionary<(string? Schema, string View), HashSet<(string?, string)>> BuildCaggDependencies(
+        Dictionary<(string? Schema, string Name), IEntityType> target)
+    {
+        var deps = new Dictionary<(string?, string), HashSet<(string?, string)>>();
+        foreach (var (key, entity) in target)
+        {
+            var query = Query(entity);
+            var references = new HashSet<(string?, string)>();
+            foreach (var (other, _) in target)
+            {
+                if (!other.Equals(key) && ReferencesView(query, other.Name))
+                {
+                    references.Add(other);
+                }
+            }
+
+            deps[key] = references;
+        }
+
+        return deps;
+    }
+
+    private static bool ReferencesView(string query, string view)
+        => System.Text.RegularExpressions.Regex.IsMatch(
+            query, $@"(?<![\w""]){System.Text.RegularExpressions.Regex.Escape(view)}(?![\w""])");
+
+    private static List<(string?, string)> TopoSortCaggs(
+        List<(string?, string)> keys,
+        Dictionary<(string? Schema, string View), HashSet<(string?, string)>> deps)
+    {
+        var included = keys.ToHashSet();
+        var state = new Dictionary<(string?, string), int>(); // 0 unvisited, 1 visiting, 2 done
+        var result = new List<(string?, string)>();
+
+        void Visit((string?, string) key)
+        {
+            if (!included.Contains(key) || state.GetValueOrDefault(key) == 2)
+            {
+                return;
+            }
+
+            if (state.GetValueOrDefault(key) == 1)
+            {
+                throw new InvalidOperationException(
+                    $"Continuous aggregates have a circular dependency involving '{key.Item2}'.");
+            }
+
+            state[key] = 1;
+            if (deps.TryGetValue(key, out var dependsOn))
+            {
+                foreach (var dependency in dependsOn)
+                {
+                    Visit(dependency);
+                }
+            }
+
+            state[key] = 2;
+            result.Add(key);
+        }
+
+        foreach (var key in keys)
+        {
+            Visit(key);
+        }
+
+        return result; // dependencies before dependents
     }
 
     private static void DiffCaggColumnstore(
@@ -271,9 +375,61 @@ public class TimescaleDbMigrationsModelDiffer : MigrationsModelDiffer
             {
                 post.Add(Sql(TimescaleDbSql.AddJob(
                     job.Name, job.Procedure, job.ScheduleInterval, job.Config,
-                    job.FixedSchedule, job.InitialStart, job.Timezone)));
+                    job.FixedSchedule, job.InitialStart, job.Timezone,
+                    job.MaxRuntime, job.MaxRetries, job.RetryPeriod)));
             }
         }
+    }
+
+    // ---------------------------------------------------------------- reorder policy
+
+    /// <summary>
+    ///     Reorder policies reference an index by database name. The index is created by EF's
+    ///     <c>CreateIndexOperation</c>, which runs after the table — so <c>add_reorder_policy</c> is
+    ///     emitted as a post-base <see cref="SqlOperation" /> (after the index exists) and the matching
+    ///     <c>remove_reorder_policy</c> as a pre-base op (while the hypertable still exists). Symmetric,
+    ///     so Down migrations reverse automatically.
+    /// </summary>
+    private static void DiffReorderPolicy(
+        IModel? sourceModel,
+        IModel? targetModel,
+        List<MigrationOperation> pre,
+        List<MigrationOperation> post)
+    {
+        var source = ReorderIndexes(sourceModel);
+        var target = ReorderIndexes(targetModel);
+
+        foreach (var (key, index) in source)
+        {
+            if (!target.TryGetValue(key, out var targetIndex) || targetIndex != index)
+            {
+                pre.Add(Sql(TimescaleDbSql.RemoveReorderPolicy(key.Table, key.Schema)));
+            }
+        }
+
+        foreach (var (key, index) in target)
+        {
+            if (!source.TryGetValue(key, out var sourceIndex) || sourceIndex != index)
+            {
+                post.Add(Sql(TimescaleDbSql.AddReorderPolicy(key.Table, key.Schema, index)));
+            }
+        }
+    }
+
+    private static Dictionary<(string? Schema, string Table), string> ReorderIndexes(IModel? model)
+    {
+        var result = new Dictionary<(string? Schema, string Table), string>();
+        foreach (var entity in model?.GetEntityTypes() ?? [])
+        {
+            if (entity.FindAnnotation(TimescaleDbAnnotationNames.IsHypertable)?.Value is true
+                && entity.FindAnnotation(TimescaleDbAnnotationNames.ReorderPolicyIndex)?.Value is string index
+                && entity.GetTableName() is { } table)
+            {
+                result[(entity.GetSchema(), table)] = index;
+            }
+        }
+
+        return result;
     }
 
     // ---------------------------------------------------------------- helpers

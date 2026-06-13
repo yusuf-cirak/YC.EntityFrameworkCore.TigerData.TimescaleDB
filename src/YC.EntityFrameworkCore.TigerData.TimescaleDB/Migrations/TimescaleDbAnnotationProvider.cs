@@ -26,8 +26,20 @@ public class TimescaleDbAnnotationProvider : NpgsqlAnnotationProvider
             yield return annotation;
         }
 
-        var hypertable = table.EntityTypeMappings
-            .Select(mapping => mapping.TypeBase)
+        var mappedTypes = table.EntityTypeMappings.Select(mapping => mapping.TypeBase).ToList();
+
+        // Migration behavior toggles apply to any table (a plain target of a hypertable→plain change
+        // still needs RebuildData), so project them independently of hypertable status.
+        foreach (var name in TimescaleDbAnnotationNames.MigrationToggles)
+        {
+            var source = mappedTypes.FirstOrDefault(type => type.FindAnnotation(name) is { Value: not null });
+            if (source?.FindAnnotation(name) is { Value: not null } toggle)
+            {
+                yield return new Annotation(name, toggle.Value);
+            }
+        }
+
+        var hypertable = mappedTypes
             .FirstOrDefault(type => type.FindAnnotation(TimescaleDbAnnotationNames.IsHypertable)?.Value is true);
 
         if (hypertable is null)

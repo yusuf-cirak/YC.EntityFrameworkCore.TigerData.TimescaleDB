@@ -79,17 +79,27 @@ public static class TimescaleDbSql
         => $"SELECT add_dimension({Regclass(table, schema)}, by_hash({Literal(column)}, "
             + $"{partitions.ToString(CultureInfo.InvariantCulture)}));";
 
+    public static string AttachTablespace(string table, string? schema, string tablespace)
+        => $"SELECT attach_tablespace({Literal(tablespace)}, {Regclass(table, schema)}, if_not_attached => true);";
+
+    public static string DetachTablespace(string table, string? schema, string tablespace)
+        => $"SELECT detach_tablespace({Literal(tablespace)}, {Regclass(table, schema)}, if_attached => true);";
+
     public static string SetChunkInterval(string table, string? schema, string interval)
         => $"SELECT set_chunk_time_interval({Regclass(table, schema)}, {IntervalOrNumber(interval)});";
 
     public static string SetIntegerNowFunction(string table, string? schema, string function)
         => $"SELECT set_integer_now_func({Regclass(table, schema)}, {Literal(function)});";
 
+    // Chunk skipping is gated behind a GUC that defaults to off; enable it for the session first so
+    // enable_chunk_skipping / disable_chunk_skipping do not raise "chunk skipping functionality disabled".
     public static string EnableChunkSkipping(string table, string? schema, string column)
-        => $"SELECT enable_chunk_skipping({Regclass(table, schema)}, {Literal(column)});";
+        => "SET timescaledb.enable_chunk_skipping = on;\n"
+            + $"SELECT enable_chunk_skipping({Regclass(table, schema)}, {Literal(column)});";
 
     public static string DisableChunkSkipping(string table, string? schema, string column)
-        => $"SELECT disable_chunk_skipping({Regclass(table, schema)}, {Literal(column)});";
+        => "SET timescaledb.enable_chunk_skipping = on;\n"
+            + $"SELECT disable_chunk_skipping({Regclass(table, schema)}, {Literal(column)});";
 
     // ---------------------------------------------------------------- columnstore
 
@@ -124,12 +134,22 @@ public static class TimescaleDbSql
     }
 
     /// <summary>
-    ///     Fully reverts the columnstore: removes the policy, converts every compressed chunk back
-    ///     to rowstore, then disables the columnstore. Multi-statement; run with a suppressed
-    ///     transaction.
+    ///     Reverts the columnstore: removes the policy and disables the columnstore. When
+    ///     <paramref name="decompress" /> is true (the default behavior) every compressed chunk is first
+    ///     converted back to rowstore — multi-statement, run with a suppressed transaction. When false,
+    ///     the chunks are left as-is (the caller asserts none are compressed); single statement.
     /// </summary>
-    public static string DisableColumnstore(string table, string? schema)
+    public static string DisableColumnstore(string table, string? schema, bool decompress = true)
     {
+        if (!decompress)
+        {
+            return new StringBuilder()
+                .Append("CALL remove_columnstore_policy(").Append(Regclass(table, schema)).AppendLine(", if_exists => true);")
+                .Append("ALTER TABLE ").Append(Qualified(table, schema))
+                .Append(" SET (timescaledb.enable_columnstore = false);")
+                .ToString();
+        }
+
         var schemaLiteral = Literal(schema ?? "public");
         var tableLiteral = Literal(table);
 
@@ -262,12 +282,21 @@ public static class TimescaleDbSql
 
     public static string AddJob(
         string name, string procedure, string? scheduleInterval, string? config,
-        bool? fixedSchedule, string? initialStart, string? timezone)
+        bool? fixedSchedule, string? initialStart, string? timezone,
+        string? maxRuntime, int? maxRetries, string? retryPeriod)
     {
         var sb = new StringBuilder()
             .Append("SELECT add_job(").Append(Literal(procedure)).Append("::regproc");
 
         AppendInterval(sb, "schedule_interval", scheduleInterval);
+        AppendInterval(sb, "max_runtime", maxRuntime);
+        AppendInterval(sb, "retry_period", retryPeriod);
+
+        if (maxRetries is not null)
+        {
+            sb.Append(", max_retries => ")
+                .Append(maxRetries.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
 
         if (config is not null)
         {

@@ -22,10 +22,36 @@ public class TimescaleDbAttributeConvention : IEntityTypeAddedConvention
         var properties = clrType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
 
         ProcessHypertable(entityTypeBuilder, clrType, properties);
-        ProcessSpacePartition(entityTypeBuilder, clrType, properties);
+        ProcessSpacePartition(entityTypeBuilder, properties);
+        ProcessTablespaces(entityTypeBuilder, clrType);
         ProcessChunkSkipping(entityTypeBuilder, properties);
         ProcessColumnstore(entityTypeBuilder, clrType, properties);
         ProcessRetention(entityTypeBuilder, clrType);
+        ProcessMigrationOptions(entityTypeBuilder, clrType);
+    }
+
+    private static void ProcessMigrationOptions(IConventionEntityTypeBuilder builder, Type clrType)
+    {
+        if (clrType.GetCustomAttribute<MigrationOptionsAttribute>() is not { } options)
+        {
+            return;
+        }
+
+        // Only persist the non-default (false) toggles; true is the implicit default.
+        if (!options.MigrateData)
+        {
+            Set(builder, TimescaleDbAnnotationNames.MigrateData, false);
+        }
+
+        if (!options.RebuildData)
+        {
+            Set(builder, TimescaleDbAnnotationNames.RebuildData, false);
+        }
+
+        if (!options.AutoDecompress)
+        {
+            Set(builder, TimescaleDbAnnotationNames.AutoDecompress, false);
+        }
     }
 
     private static void ProcessHypertable(
@@ -69,28 +95,27 @@ public class TimescaleDbAttributeConvention : IEntityTypeAddedConvention
 
     private static void ProcessSpacePartition(
         IConventionEntityTypeBuilder builder,
-        Type clrType,
         PropertyInfo[] properties)
     {
-        var space = properties
-            .Where(p => p.GetCustomAttribute<SpacePartitionAttribute>() is not null)
+        var dimensions = properties
+            .Select(p => (p.Name, Attribute: p.GetCustomAttribute<SpacePartitionAttribute>()))
+            .Where(x => x.Attribute is not null)
+            .Select(x => $"{x.Name}:{x.Attribute!.Partitions}")
             .ToList();
 
-        if (space.Count == 0)
+        if (dimensions.Count > 0)
         {
-            return;
+            Set(builder, TimescaleDbAnnotationNames.SpaceDimensions, string.Join(", ", dimensions));
         }
+    }
 
-        if (space.Count > 1)
+    private static void ProcessTablespaces(IConventionEntityTypeBuilder builder, Type clrType)
+    {
+        var names = clrType.GetCustomAttributes<TablespaceAttribute>().Select(a => a.Name).ToList();
+        if (names.Count > 0)
         {
-            throw new InvalidOperationException(
-                $"'{clrType.Name}' marks more than one property with [SpacePartition]; only one hash "
-                + "dimension is supported.");
+            Set(builder, TimescaleDbAnnotationNames.Tablespaces, string.Join(", ", names));
         }
-
-        Set(builder, TimescaleDbAnnotationNames.SpacePartitionColumn, space[0].Name);
-        Set(builder, TimescaleDbAnnotationNames.SpacePartitions,
-            space[0].GetCustomAttribute<SpacePartitionAttribute>()!.Partitions);
     }
 
     private static void ProcessChunkSkipping(IConventionEntityTypeBuilder builder, PropertyInfo[] properties)

@@ -1,8 +1,10 @@
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Infrastructure.Internal;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Migrations;
+using YC.EntityFrameworkCore.TigerData.TimescaleDB.Infrastructure.Internal;
 using YC.EntityFrameworkCore.TigerData.TimescaleDB.Migrations.Internal;
 
 namespace YC.EntityFrameworkCore.TigerData.TimescaleDB.Migrations;
@@ -17,12 +19,24 @@ namespace YC.EntityFrameworkCore.TigerData.TimescaleDB.Migrations;
 /// </summary>
 public class TimescaleDbMigrationsSqlGenerator : NpgsqlMigrationsSqlGenerator
 {
+    private readonly bool _migrateDataDefault;
+    private readonly bool _rebuildDataDefault;
+    private readonly bool _autoDecompressDefault;
+
     public TimescaleDbMigrationsSqlGenerator(
         MigrationsSqlGeneratorDependencies dependencies,
-        INpgsqlSingletonOptions npgsqlSingletonOptions)
+        INpgsqlSingletonOptions npgsqlSingletonOptions,
+        IDbContextOptions contextOptions)
         : base(dependencies, npgsqlSingletonOptions)
     {
+        var extension = contextOptions.FindExtension<TimescaleDbOptionsExtension>();
+        _migrateDataDefault = extension?.MigrateData ?? true;
+        _rebuildDataDefault = extension?.RebuildData ?? true;
+        _autoDecompressDefault = extension?.AutoDecompress ?? true;
     }
+
+    private TimescaleDbTableState ReadState(IReadOnlyAnnotatable source)
+        => TimescaleDbTableState.Read(source, _migrateDataDefault, _rebuildDataDefault, _autoDecompressDefault);
 
     protected override void Generate(
         CreateTableOperation operation,
@@ -37,7 +51,7 @@ public class TimescaleDbMigrationsSqlGenerator : NpgsqlMigrationsSqlGenerator
             return;
         }
 
-        var state = TimescaleDbTableState.Read(operation);
+        var state = ReadState(operation);
         if (state.IsHypertable)
         {
             EmitHypertableSetup(operation.Name, operation.Schema, state, builder, migrateData: false);
@@ -48,11 +62,20 @@ public class TimescaleDbMigrationsSqlGenerator : NpgsqlMigrationsSqlGenerator
     {
         base.Generate(operation, model, builder);
 
-        var old = TimescaleDbTableState.Read(operation.OldTable);
-        var @new = TimescaleDbTableState.Read(operation);
+        var old = ReadState(operation.OldTable);
+        var @new = ReadState(operation);
 
         if (RequiresRebuild(old, @new))
         {
+            if (!@new.RebuildData)
+            {
+                throw new InvalidOperationException(
+                    $"The change to table '{operation.Name}' requires a data-copying table rebuild "
+                    + "(hypertable→plain, partition column change, or space dimension drop/repartition), "
+                    + "but rebuilds are disabled for this entity (WithRebuildData(false) / "
+                    + "[MigrationOptions(RebuildData = false)]). Re-enable it, or perform the change manually.");
+            }
+
             EmitRebuild(operation.Name, operation.Schema, @new, builder);
             return;
         }
@@ -60,7 +83,7 @@ public class TimescaleDbMigrationsSqlGenerator : NpgsqlMigrationsSqlGenerator
         if (!old.IsHypertable && @new.IsHypertable)
         {
             // Existing (possibly populated) plain table becomes a hypertable.
-            EmitHypertableSetup(operation.Name, operation.Schema, @new, builder, migrateData: true);
+            EmitHypertableSetup(operation.Name, operation.Schema, @new, builder, migrateData: @new.MigrateData);
             return;
         }
 
@@ -85,14 +108,19 @@ public class TimescaleDbMigrationsSqlGenerator : NpgsqlMigrationsSqlGenerator
         Statement(builder, TimescaleDbSql.CreateHypertable(
             table, schema, s.PartitionColumn!, s.ChunkInterval, s.CreateDefaultIndexes, migrateData));
 
-        if (s.SpaceColumn is not null && s.SpacePartitions is { } partitions)
+        foreach (var dimension in s.SpaceDimensions)
         {
-            Statement(builder, TimescaleDbSql.AddDimension(table, schema, s.SpaceColumn, partitions));
+            Statement(builder, TimescaleDbSql.AddDimension(table, schema, dimension.Column, dimension.Partitions));
         }
 
         if (s.IntegerNowFunction is not null)
         {
             Statement(builder, TimescaleDbSql.SetIntegerNowFunction(table, schema, s.IntegerNowFunction));
+        }
+
+        foreach (var tablespace in s.Tablespaces)
+        {
+            Statement(builder, TimescaleDbSql.AttachTablespace(table, schema, tablespace));
         }
 
         if (s.Columnstore)
@@ -127,10 +155,7 @@ public class TimescaleDbMigrationsSqlGenerator : NpgsqlMigrationsSqlGenerator
                 s.ColumnstorePolicy.InitialStart, s.ColumnstorePolicy.Timezone));
         }
 
-        if (s.ReorderIndex is not null)
-        {
-            Statement(builder, TimescaleDbSql.AddReorderPolicy(table, schema, s.ReorderIndex));
-        }
+        // The reorder policy is emitted by the model differ (after the index is created), not here.
     }
 
     // ---------------------------------------------------------------- in-place diff
@@ -147,14 +172,27 @@ public class TimescaleDbMigrationsSqlGenerator : NpgsqlMigrationsSqlGenerator
             Statement(builder, TimescaleDbSql.SetChunkInterval(table, schema, @new.ChunkInterval));
         }
 
-        if (old.SpaceColumn is null && @new.SpaceColumn is not null && @new.SpacePartitions is { } partitions)
+        // Space dimensions added (removal / partition-count change forces a rebuild — see RequiresRebuild).
+        var oldColumns = old.SpaceDimensions.Select(d => d.Column).ToHashSet(StringComparer.Ordinal);
+        foreach (var dimension in @new.SpaceDimensions.Where(d => !oldColumns.Contains(d.Column)))
         {
-            Statement(builder, TimescaleDbSql.AddDimension(table, schema, @new.SpaceColumn, partitions));
+            Statement(builder, TimescaleDbSql.AddDimension(table, schema, dimension.Column, dimension.Partitions));
         }
 
         if (@new.IntegerNowFunction is not null && @new.IntegerNowFunction != old.IntegerNowFunction)
         {
             Statement(builder, TimescaleDbSql.SetIntegerNowFunction(table, schema, @new.IntegerNowFunction));
+        }
+
+        // Tablespaces are reversible in place: attach the new, detach the gone.
+        foreach (var tablespace in @new.Tablespaces.Except(old.Tablespaces, StringComparer.Ordinal))
+        {
+            Statement(builder, TimescaleDbSql.AttachTablespace(table, schema, tablespace));
+        }
+
+        foreach (var tablespace in old.Tablespaces.Except(@new.Tablespaces, StringComparer.Ordinal))
+        {
+            Statement(builder, TimescaleDbSql.DetachTablespace(table, schema, tablespace));
         }
 
         foreach (var column in @new.ChunkSkipping.Except(old.ChunkSkipping, StringComparer.Ordinal))
@@ -179,18 +217,7 @@ public class TimescaleDbMigrationsSqlGenerator : NpgsqlMigrationsSqlGenerator
             add: p => TimescaleDbSql.AddColumnstorePolicy(table, schema, p.Main!, p.Schedule, p.InitialStart, p.Timezone),
             remove: () => TimescaleDbSql.RemoveColumnstorePolicy(table, schema));
 
-        if (old.ReorderIndex != @new.ReorderIndex)
-        {
-            if (old.ReorderIndex is not null)
-            {
-                Statement(builder, TimescaleDbSql.RemoveReorderPolicy(table, schema));
-            }
-
-            if (@new.ReorderIndex is not null)
-            {
-                Statement(builder, TimescaleDbSql.AddReorderPolicy(table, schema, @new.ReorderIndex));
-            }
-        }
+        // The reorder policy is emitted by the model differ (it must run after the index exists).
     }
 
     private void EmitColumnstoreDiff(
@@ -209,7 +236,11 @@ public class TimescaleDbMigrationsSqlGenerator : NpgsqlMigrationsSqlGenerator
 
             case (true, false):
                 // Decompress every chunk, then disable; run outside the migration transaction.
-                Statement(builder, TimescaleDbSql.DisableColumnstore(table, schema), suppressTransaction: true);
+                // When auto-decompress is off, only the policy is removed and the flag flipped.
+                Statement(
+                    builder,
+                    TimescaleDbSql.DisableColumnstore(table, schema, decompress: @new.AutoDecompress),
+                    suppressTransaction: @new.AutoDecompress);
                 break;
 
             case (true, true) when @new.ColumnstoreLayoutDiffers(old):
@@ -258,10 +289,16 @@ public class TimescaleDbMigrationsSqlGenerator : NpgsqlMigrationsSqlGenerator
                 return true; // cannot repartition in place
             }
 
-            if (old.SpaceColumn is not null
-                && (@new.SpaceColumn != old.SpaceColumn || @new.SpacePartitions != old.SpacePartitions))
+            // Any existing space dimension dropped or its partition count changed → rebuild
+            // (TimescaleDB cannot drop or alter a dimension). New dimensions are added in place.
+            var newByColumn = @new.SpaceDimensions.ToDictionary(d => d.Column, d => d.Partitions, StringComparer.Ordinal);
+            foreach (var dimension in old.SpaceDimensions)
             {
-                return true; // cannot drop or alter an existing space dimension
+                if (!newByColumn.TryGetValue(dimension.Column, out var partitions)
+                    || partitions != dimension.Partitions)
+                {
+                    return true;
+                }
             }
         }
 
@@ -291,9 +328,9 @@ public class TimescaleDbMigrationsSqlGenerator : NpgsqlMigrationsSqlGenerator
                 shadow, schema, target.PartitionColumn!, target.ChunkInterval, target.CreateDefaultIndexes,
                 migrateData: false));
 
-            if (target.SpaceColumn is not null && target.SpacePartitions is { } partitions)
+            foreach (var dimension in target.SpaceDimensions)
             {
-                Statement(builder, TimescaleDbSql.AddDimension(shadow, schema, target.SpaceColumn, partitions));
+                Statement(builder, TimescaleDbSql.AddDimension(shadow, schema, dimension.Column, dimension.Partitions));
             }
 
             if (target.IntegerNowFunction is not null)
@@ -308,6 +345,11 @@ public class TimescaleDbMigrationsSqlGenerator : NpgsqlMigrationsSqlGenerator
 
         if (target.IsHypertable)
         {
+            foreach (var tablespace in target.Tablespaces)
+            {
+                Statement(builder, TimescaleDbSql.AttachTablespace(table, schema, tablespace));
+            }
+
             if (target.Columnstore)
             {
                 Statement(builder, TimescaleDbSql.SetColumnstore(

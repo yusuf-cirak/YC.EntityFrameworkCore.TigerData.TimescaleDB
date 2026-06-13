@@ -115,8 +115,7 @@ public class EndToEndTests(TimescaleDbContainerFixture fixture)
         Assert.Equal(true, readings[TimescaleDbAnnotationNames.IsHypertable]);
         Assert.Equal("time", readings[TimescaleDbAnnotationNames.PartitionColumn]);
         Assert.Equal("1 day", readings[TimescaleDbAnnotationNames.ChunkInterval]);
-        Assert.Equal("device_id", readings[TimescaleDbAnnotationNames.SpacePartitionColumn]);
-        Assert.Equal(4, readings[TimescaleDbAnnotationNames.SpacePartitions]);
+        Assert.Equal("device_id:4", readings[TimescaleDbAnnotationNames.SpaceDimensions]);
         Assert.Equal(true, readings[TimescaleDbAnnotationNames.ColumnstoreEnabled]);
         Assert.Equal("90 days", readings[TimescaleDbAnnotationNames.RetentionPolicyDropAfter]);
         Assert.Equal("7 days", readings[TimescaleDbAnnotationNames.ColumnstorePolicyAfter]);

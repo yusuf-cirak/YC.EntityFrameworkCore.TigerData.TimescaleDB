@@ -66,8 +66,7 @@ public class ModelBuildingTests
 
         Assert.Equal(true, entity.FindAnnotation(TimescaleDbAnnotationNames.IsHypertable)?.Value);
         Assert.Equal("Time", entity.FindAnnotation(TimescaleDbAnnotationNames.PartitionColumn)?.Value);
-        Assert.Equal("DeviceId", entity.FindAnnotation(TimescaleDbAnnotationNames.SpacePartitionColumn)?.Value);
-        Assert.Equal(4, entity.FindAnnotation(TimescaleDbAnnotationNames.SpacePartitions)?.Value);
+        Assert.Equal("DeviceId:4", entity.FindAnnotation(TimescaleDbAnnotationNames.SpaceDimensions)?.Value);
         Assert.Equal("7 days", entity.FindAnnotation(TimescaleDbAnnotationNames.ColumnstorePolicyAfter)?.Value);
         Assert.Equal("90 days", entity.FindAnnotation(TimescaleDbAnnotationNames.RetentionPolicyDropAfter)?.Value);
         Assert.Equal(

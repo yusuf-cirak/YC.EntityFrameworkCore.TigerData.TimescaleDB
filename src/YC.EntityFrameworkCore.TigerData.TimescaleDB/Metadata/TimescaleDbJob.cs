@@ -35,6 +35,15 @@ public sealed record TimescaleDbJob
     /// <summary>Time zone for fixed schedules. TimescaleDB default: UTC.</summary>
     public string? Timezone { get; init; }
 
+    /// <summary>Maximum run time before the job is stopped (interval literal).</summary>
+    public string? MaxRuntime { get; init; }
+
+    /// <summary>Number of retries on failure before the job is considered failed.</summary>
+    public int? MaxRetries { get; init; }
+
+    /// <summary>Delay between retries (interval literal).</summary>
+    public string? RetryPeriod { get; init; }
+
     public static string Serialize(IReadOnlyList<TimescaleDbJob> jobs)
         => JsonSerializer.Serialize(jobs.OrderBy(j => j.Name, StringComparer.Ordinal), SerializerOptions);
 
