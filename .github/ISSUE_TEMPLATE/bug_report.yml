@@ -1,0 +1,61 @@
+name: Bug report
+description: Report incorrect behavior, a wrong migration, or a runtime error
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please fill in the fields below — a minimal reproduction is the single
+        biggest factor in getting a bug fixed quickly. For security issues, use the Security tab instead.
+
+  - type: input
+    id: version
+    attributes:
+      label: Package version
+      description: Version of YC.EntityFrameworkCore.TigerData.TimescaleDB
+      placeholder: "1.0.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Minimal entity/model + the Fluent or attribute config, and the steps to trigger it.
+      render: csharp
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the generated SQL or the exception / stack trace if relevant.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: TimescaleDB version, EF Core / Npgsql versions, .NET SDK, OS.
+      value: |
+        - TimescaleDB:
+        - EF Core / Npgsql:
+        - .NET SDK:
+        - OS:
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs (optional)
+      render: shell

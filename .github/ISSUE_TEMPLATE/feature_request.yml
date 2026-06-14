@@ -1,0 +1,36 @@
+name: Feature request
+description: Propose a new TimescaleDB feature or an API improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. Describe the problem first, then the proposed solution.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / use case
+      description: What are you trying to do that the library doesn't support today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API
+      description: How would the Fluent API / attribute look? Sketch the desired surface.
+      render: csharp
+    validations:
+      required: true
+
+  - type: input
+    id: tsdb-reference
+    attributes:
+      label: TimescaleDB reference
+      description: Link to the relevant TimescaleDB function/feature docs, if any.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered (optional)
