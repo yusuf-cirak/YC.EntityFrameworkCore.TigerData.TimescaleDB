@@ -45,7 +45,7 @@ jobs:
           dotnet pack YC.EntityFrameworkCore.TigerData.TimescaleDB.slnx
           --no-build --configuration Release --output artifacts
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: nuget-packages
           path: artifacts/*.nupkg
