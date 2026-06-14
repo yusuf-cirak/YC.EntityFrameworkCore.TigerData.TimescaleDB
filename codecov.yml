@@ -1,0 +1,13 @@
+# Report-only: coverage is surfaced (badge, PR comments) but never fails a check.
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
+
+comment:
+  layout: "reach, diff, flags, files"
+  require_changes: false

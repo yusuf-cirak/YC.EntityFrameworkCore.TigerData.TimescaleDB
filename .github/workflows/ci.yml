@@ -25,11 +25,20 @@ jobs:
         run: >
           dotnet test test/YC.EntityFrameworkCore.TigerData.TimescaleDB.UnitTests
           --no-build --configuration Release
+          --collect:"XPlat Code Coverage" --results-directory coverage
 
       - name: Functional tests (Testcontainers, TimescaleDB pg17)
         run: >
           dotnet test test/YC.EntityFrameworkCore.TigerData.TimescaleDB.FunctionalTests
           --no-build --configuration Release
+          --collect:"XPlat Code Coverage" --results-directory coverage
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/**/coverage.cobertura.xml
+          fail_ci_if_error: false
 
       - name: Pack
         run: >

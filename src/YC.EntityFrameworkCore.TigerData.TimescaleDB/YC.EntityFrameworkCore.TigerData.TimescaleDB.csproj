@@ -7,6 +7,14 @@
     <Description>TimescaleDB (TigerData) support for Entity Framework Core on top of the Npgsql provider: hypertables, columnstore/compression, continuous aggregates, retention/reorder policies, jobs, UUIDv7 and hyperfunction query translation — configurable via Fluent API and attributes, fully integrated with EF Core migrations.</Description>
   </PropertyGroup>
 
+  <PropertyGroup Label="Pack quality">
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />

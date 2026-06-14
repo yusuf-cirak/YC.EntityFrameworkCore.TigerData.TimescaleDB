@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Release Please
+        id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          target-branch: master
+
+      # The steps below run only when a release PR was just merged and a release/tag was created.
+      - uses: actions/checkout@v4
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+
+      - uses: actions/setup-dotnet@v4
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        with:
+          global-json-file: global.json
+
+      - name: Pack
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        run: |
+          dotnet restore YC.EntityFrameworkCore.TigerData.TimescaleDB.slnx
+          dotnet build YC.EntityFrameworkCore.TigerData.TimescaleDB.slnx --no-restore --configuration Release
+          dotnet pack YC.EntityFrameworkCore.TigerData.TimescaleDB.slnx --no-build --configuration Release --output artifacts
+
+      - name: Push to NuGet
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        run: >
+          dotnet nuget push "artifacts/*.nupkg"
+          --api-key ${{ secrets.NUGET_API_KEY }}
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate

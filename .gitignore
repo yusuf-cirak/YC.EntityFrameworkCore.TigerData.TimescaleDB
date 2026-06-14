@@ -8,6 +8,13 @@ riderModule.iml
 .idea/
 .vs/
 
+# Build / CI output
+artifacts/
+coverage/
+TestResults/
+*.nupkg
+*.snupkg
+
 # Local tooling artifacts
 ruvector.db
 *.db

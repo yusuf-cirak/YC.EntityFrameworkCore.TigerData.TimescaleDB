@@ -13,7 +13,9 @@
       NpgsqlAnnotationProvider, ...) is the established pattern for EF Core provider
       extensions; Npgsql's own plugins (NTS, NodaTime) do the same.
     -->
-    <NoWarn>$(NoWarn);EF1001</NoWarn>
+    <!-- CS1591 / CS1573: ship the XML docs that exist (attributes, Fluent API) without forcing a doc
+         comment on every public member / every parameter under TreatWarningsAsErrors. -->
+    <NoWarn>$(NoWarn);EF1001;CS1591;CS1573</NoWarn>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <Deterministic>true</Deterministic>
   </PropertyGroup>
@@ -27,19 +29,12 @@
     <RepositoryType>git</RepositoryType>
     <PackageTags>timescaledb;tigerdata;entity-framework-core;efcore;time-series;postgresql;npgsql;hypertable</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <VersionPrefix>0.1.0</VersionPrefix>
-  </PropertyGroup>
-
-  <PropertyGroup Label="Build quality" Condition="'$(IsPackable)' == 'true'">
-    <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <PublishRepositoryUrl>true</PublishRepositoryUrl>
-    <EmbedUntrackedSources>true</EmbedUntrackedSources>
-    <IncludeSymbols>true</IncludeSymbols>
-    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <VersionPrefix>0.1.0</VersionPrefix><!-- x-release-please-version -->
   </PropertyGroup>
 
   <PropertyGroup>
-    <!-- Projects opt in to packing explicitly. -->
+    <!-- Projects opt in to packing explicitly. Pack-quality settings (symbols, docs, SourceLink) live
+         in the packable project's csproj so they evaluate after IsPackable is set. -->
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
