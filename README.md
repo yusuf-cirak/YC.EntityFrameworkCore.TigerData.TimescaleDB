@@ -1,6 +1,6 @@
 # YC.EntityFrameworkCore.TigerData.TimescaleDB
 
-[![Tests](https://img.shields.io/github/actions/workflow/status/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB/ci.yml?branch=main&label=tests&logo=github)](https://github.com/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/github/actions/workflow/status/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB/ci.yml?branch=master&label=tests&logo=github)](https://github.com/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB/actions/workflows/ci.yml)
 [![NuGet](https://img.shields.io/nuget/v/YC.EntityFrameworkCore.TigerData.TimescaleDB?logo=nuget&label=nuget)](https://www.nuget.org/packages/YC.EntityFrameworkCore.TigerData.TimescaleDB)
 [![Downloads](https://img.shields.io/nuget/dt/YC.EntityFrameworkCore.TigerData.TimescaleDB?logo=nuget&label=downloads)](https://www.nuget.org/packages/YC.EntityFrameworkCore.TigerData.TimescaleDB)
 [![codecov](https://img.shields.io/codecov/c/github/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB?logo=codecov)](https://codecov.io/gh/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB)
@@ -194,6 +194,37 @@ reverse-engineered** (materialized views are outside the Npgsql scaffolding surf
   session doing the bulk `INSERT`/`COPY`. It has no declarative DDL form, so it is outside this package's
   migration scope (and is a TimescaleDB tech preview).
 
+## Building & testing
+
+Prerequisites: the **.NET 10 SDK** (see `global.json`) and **Docker** (the functional tests spin up a
+real TimescaleDB via Testcontainers).
+
+```bash
+dotnet build YC.EntityFrameworkCore.TigerData.TimescaleDB.slnx -c Release
+
+# Fast SQL-generation / model tests (no Docker):
+dotnet test test/YC.EntityFrameworkCore.TigerData.TimescaleDB.UnitTests
+
+# End-to-end tests against a real TimescaleDB (Docker required):
+dotnet test test/YC.EntityFrameworkCore.TigerData.TimescaleDB.FunctionalTests
+```
+
+The build treats warnings as errors and runs the .NET analyzers — keep it clean.
+
+## Contributing
+
+Contributions are welcome. Please read **[CONTRIBUTING.md](CONTRIBUTING.md)** first.
+
+- **Issues** use templates — pick *Bug report* or *Feature request*; they apply the right label
+  automatically. Questions go to [Discussions](https://github.com/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB/discussions).
+- **Pull requests** follow the template and **[Conventional Commits](https://www.conventionalcommits.org/)**
+  in the PR title (`feat:`, `fix:`, `docs:`, …) — this drives versioning and the changelog.
+- **Releases** are automated: [Release Please](https://github.com/googleapis/release-please) opens a
+  release PR; merging it tags the version, writes `CHANGELOG.md`, and publishes to NuGet via OIDC
+  (no API keys).
+- Security issues: see **[SECURITY.md](SECURITY.md)** — do not open a public issue.
+
 ## License
 
 MIT
+
