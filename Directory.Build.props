@@ -29,7 +29,7 @@
     <RepositoryType>git</RepositoryType>
     <PackageTags>timescaledb;tigerdata;entity-framework-core;efcore;time-series;postgresql;npgsql;hypertable</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <VersionPrefix>0.1.0</VersionPrefix><!-- x-release-please-version -->
+    <VersionPrefix>1.0.0</VersionPrefix><!-- x-release-please-version -->
   </PropertyGroup>
 
   <PropertyGroup>
