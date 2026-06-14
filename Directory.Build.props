@@ -24,8 +24,8 @@
     <Authors>Yusuf Çırak</Authors>
     <Product>YC.EntityFrameworkCore.TigerData.TimescaleDB</Product>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/yusufcirak/YC.EntityFrameworkCore.TigerData.TimescaleDB</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/yusufcirak/YC.EntityFrameworkCore.TigerData.TimescaleDB</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>timescaledb;tigerdata;entity-framework-core;efcore;time-series;postgresql;npgsql;hypertable</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>

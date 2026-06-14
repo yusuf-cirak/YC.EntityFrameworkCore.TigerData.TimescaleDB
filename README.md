@@ -1,12 +1,12 @@
 # YC.EntityFrameworkCore.TigerData.TimescaleDB
 
-[![Tests](https://img.shields.io/github/actions/workflow/status/yusufcirak/YC.EntityFrameworkCore.TigerData.TimescaleDB/ci.yml?branch=main&label=tests&logo=github)](https://github.com/yusufcirak/YC.EntityFrameworkCore.TigerData.TimescaleDB/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/github/actions/workflow/status/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB/ci.yml?branch=main&label=tests&logo=github)](https://github.com/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB/actions/workflows/ci.yml)
 [![NuGet](https://img.shields.io/nuget/v/YC.EntityFrameworkCore.TigerData.TimescaleDB?logo=nuget&label=nuget)](https://www.nuget.org/packages/YC.EntityFrameworkCore.TigerData.TimescaleDB)
 [![Downloads](https://img.shields.io/nuget/dt/YC.EntityFrameworkCore.TigerData.TimescaleDB?logo=nuget&label=downloads)](https://www.nuget.org/packages/YC.EntityFrameworkCore.TigerData.TimescaleDB)
-[![codecov](https://img.shields.io/codecov/c/github/yusufcirak/YC.EntityFrameworkCore.TigerData.TimescaleDB?logo=codecov)](https://codecov.io/gh/yusufcirak/YC.EntityFrameworkCore.TigerData.TimescaleDB)
-[![Release](https://img.shields.io/github/v/release/yusufcirak/YC.EntityFrameworkCore.TigerData.TimescaleDB?sort=date&display_name=release&logo=github&label=release)](https://github.com/yusufcirak/YC.EntityFrameworkCore.TigerData.TimescaleDB/releases/latest)
-[![Issues](https://img.shields.io/github/issues/yusufcirak/YC.EntityFrameworkCore.TigerData.TimescaleDB?logo=github)](https://github.com/yusufcirak/YC.EntityFrameworkCore.TigerData.TimescaleDB/issues)
-[![License: MIT](https://img.shields.io/github/license/yusufcirak/YC.EntityFrameworkCore.TigerData.TimescaleDB)](#license)
+[![codecov](https://img.shields.io/codecov/c/github/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB?logo=codecov)](https://codecov.io/gh/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB)
+[![Release](https://img.shields.io/github/v/release/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB?sort=date&display_name=release&logo=github&label=release)](https://github.com/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB/releases/latest)
+[![Issues](https://img.shields.io/github/issues/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB?logo=github)](https://github.com/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB/issues)
+[![License: MIT](https://img.shields.io/github/license/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB)](#license)
 
 First-class [TimescaleDB](https://www.tigerdata.com/) support for Entity Framework Core, layered on top of the
 [Npgsql EF Core provider](https://www.npgsql.org/efcore/).
