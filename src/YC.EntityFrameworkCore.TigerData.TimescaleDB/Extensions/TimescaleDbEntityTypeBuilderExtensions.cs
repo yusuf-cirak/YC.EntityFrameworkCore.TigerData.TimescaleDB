@@ -137,7 +137,17 @@ public static class TimescaleDbEntityTypeBuilderExtensions
         return entityTypeBuilder;
     }
 
-    /// <summary>Enables chunk skipping (min/max range tracking) on the given column.</summary>
+    /// <summary>
+    ///     Enables chunk skipping (<c>enable_chunk_skipping</c>) on the given column: TimescaleDB tracks
+    ///     each chunk's min/max and skips chunks that can't match a range filter on it.
+    /// </summary>
+    /// <remarks>
+    ///     For a <b>non-partition</b> column — the time column and space dimensions are already pruned
+    ///     automatically; this extends that to a secondary column you filter on, ideally one correlated
+    ///     with time. It only benefits <b>compressed</b> chunks (the min/max is gathered when a chunk is
+    ///     converted to the columnstore), so pair it with <c>HasColumnstore(...)</c>. Supported types:
+    ///     <c>smallint</c>/<c>int</c>/<c>bigint</c>/<c>serial</c>/<c>bigserial</c>/<c>date</c>/<c>timestamp</c>/<c>timestamptz</c>.
+    /// </remarks>
     public static EntityTypeBuilder<TEntity> HasChunkSkipping<TEntity>(
         this EntityTypeBuilder<TEntity> entityTypeBuilder,
         Expression<Func<TEntity, object?>> column)

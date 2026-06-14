@@ -184,8 +184,12 @@ reverse-engineered** (materialized views are outside the Npgsql scaffolding surf
   migration includes a warning comment. Re-create FKs and any reorder policy manually afterward.
 - **Chunk interval changes apply to future chunks only** (`set_chunk_time_interval`); existing chunks keep their
   interval. Re-chunking historical data is intentionally not performed.
-- **Chunk skipping** requires an ordered scalar column (integer/time, not floating point); the migration enables
-  the `timescaledb.enable_chunk_skipping` GUC.
+- **Chunk exclusion is automatic on the partition columns** — filtering on the time column or a space
+  dimension prunes chunks with no configuration. **Chunk skipping** (`HasChunkSkipping`) is the opt-in
+  extension to a *non-partition* column, and only speeds up **compressed** chunks (the min/max is gathered
+  when a chunk is converted to the columnstore — enable the columnstore too). Supported types: integer
+  family + `date`/`timestamp`/`timestamptz`. The migration enables the `timescaledb.enable_chunk_skipping`
+  GUC for you.
 - Converting an existing table to a hypertable and disabling the columnstore are **data-heavy** (row migration /
   chunk decompression); review the generated migration before running it in production.
 - Enabling the columnstore auto-creates a default conversion policy; `HasColumnstorePolicy` replaces it.

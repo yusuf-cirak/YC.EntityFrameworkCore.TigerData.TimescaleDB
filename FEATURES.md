@@ -129,6 +129,11 @@ public DateTimeOffset Time { get; set; }
 
 The primary key (if any) **must include the partition column** — keyless entities are the natural fit.
 
+> **Automatic chunk exclusion:** once a table is a hypertable, queries that filter on the **partition
+> columns** — the time column and any [space dimensions](#space-dimensions) — automatically skip chunks
+> that can't match. No configuration. [Chunk skipping](#chunk-skipping) is the opt-in extension of this
+> to a *non-partition* column.
+
 ## Integer-time hypertable
 
 **What it is:** a hypertable partitioned by an **integer** column (epoch microseconds, a sequence, …)
@@ -187,7 +192,8 @@ Attribute form (one attribute per column):
 ```
 
 `partitions` must be **> 0**. Adding a dimension applies in place; **removing or changing** one rebuilds
-the table (data preserved).
+the table (data preserved). Beyond write parallelism, equality filters on a space dimension also benefit
+from [automatic chunk exclusion](#hypertable) — querying `WHERE device_id = 'd1'` prunes chunks.
 
 ## Tablespaces
 
@@ -228,15 +234,24 @@ Attach/detach is in place and reversible.
 
 ## Chunk skipping
 
-**What it is:** per-column **min/max range tracking** so the planner can skip whole chunks that can't
-match a `WHERE` on that column — cheap pruning for monotonic or clustered columns.
+**What it is:** an **opt-in** extension of [automatic chunk exclusion](#hypertable) to a
+**non-partition** column. TimescaleDB tracks each chunk's min/max for the column and skips chunks that
+can't match a range filter on it.
+
+> Filtering on the time column or a [space dimension](#space-dimensions) is **already** pruned
+> automatically — reach for chunk skipping only for a *secondary* column you also filter on, ideally one
+> **correlated with time** (e.g. a monotonically-growing id). It is pointless on a partition column.
+
+**It only speeds up compressed chunks** — the min/max is gathered when a chunk is converted to the
+[columnstore](#columnstore). Enable the columnstore too, or chunk skipping has no query effect (the call
+still succeeds).
 
 ```csharp
-// A reading with a monotonically-increasing sequence column (bigint).
+// A reading with a monotonically-increasing sequence id (bigint), correlated with time.
 public class SeqReading
 {
     public DateTimeOffset Time { get; set; }
-    public long Sequence { get; set; }   // grows over time → great for chunk skipping
+    public long Sequence { get; set; }
     public double Value { get; set; }
 }
 
@@ -246,19 +261,29 @@ modelBuilder.Entity<SeqReading>(e =>
     e.ToTable("seq_readings");
     e.IsHypertable(x => x.Time, chunkInterval: TimeSpan.FromDays(1));
 
-    // Track per-chunk min/max of Sequence so queries filtering on it skip chunks.
-    // The column must be an ordered scalar (integer or time) — double precision is rejected.
+    // Chunk skipping only helps COMPRESSED chunks, so enable the columnstore:
+    e.HasColumnstore(cs => cs.OrderByDescending(x => x.Time));
+
+    // Track per-chunk min/max of Sequence so range filters on it skip chunks.
     e.HasChunkSkipping(x => x.Sequence);
 });
 ```
 
-Attribute form:
+Attribute form (pair with `[Columnstore]`):
 
 ```csharp
-[ChunkSkipping] public long Sequence { get; set; }
+[Columnstore]
+public class SeqReading
+{
+    [PartitionColumn(1, Every.Day)] public DateTimeOffset Time { get; set; }
+    [ChunkSkipping]                 public long Sequence { get; set; }   // non-partition, time-correlated
+    public double Value { get; set; }
+}
 ```
 
-The migration turns on the required `timescaledb.enable_chunk_skipping` GUC for you.
+Supported column types: `smallint`, `int`, `bigint`, `serial`, `bigserial`, `date`, `timestamp`,
+`timestamptz` (no floating-point or text). The migration turns on the required
+`timescaledb.enable_chunk_skipping` GUC for you.
 
 ## Columnstore
 

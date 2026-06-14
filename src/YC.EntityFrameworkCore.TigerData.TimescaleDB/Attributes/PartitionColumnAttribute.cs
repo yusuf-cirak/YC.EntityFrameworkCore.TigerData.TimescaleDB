@@ -90,13 +90,22 @@ public sealed class SpacePartitionAttribute : Attribute
 }
 
 /// <summary>
-///     Enables chunk skipping (min/max range tracking) on this property's column
-///     (<c>enable_chunk_skipping</c>), letting the planner skip chunks that can't match a filter on it.
+///     Enables chunk skipping on this property's column (<c>enable_chunk_skipping</c>): TimescaleDB tracks
+///     each chunk's min/max for the column and skips chunks that can't match a range filter on it.
 /// </summary>
 /// <remarks>
-///     The column must be an <b>ordered scalar</b> type (integer or time — <c>double precision</c> is
-///     rejected by TimescaleDB). Most useful on monotonic or well-clustered columns (e.g. an id that
-///     grows with time). Equivalent to <c>HasChunkSkipping(x =&gt; x.Col)</c>.
+///     This is for a <b>non-partition</b> column. Filtering on the time column or a space dimension is
+///     <b>already</b> pruned automatically by the hypertable — chunk skipping extends that to a secondary
+///     column you also filter on, best when it is <b>correlated with the time column</b> (e.g. a
+///     monotonically-growing id).
+///     <para>
+///     It only speeds up <b>compressed</b> chunks: the min/max is computed when a chunk is converted to
+///     the columnstore, so pair it with <see cref="ColumnstoreAttribute" /> / <c>HasColumnstore(...)</c> —
+///     without the columnstore it is accepted but has no query effect.
+///     </para>
+///     Supported column types: <c>smallint</c>, <c>int</c>, <c>bigint</c>, <c>serial</c>, <c>bigserial</c>,
+///     <c>date</c>, <c>timestamp</c>, <c>timestamptz</c> (no floating-point or text). Equivalent to
+///     <c>HasChunkSkipping(x =&gt; x.Col)</c>.
 /// </remarks>
 [AttributeUsage(AttributeTargets.Property)]
 public sealed class ChunkSkippingAttribute : Attribute;
