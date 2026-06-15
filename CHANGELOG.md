@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB/compare/v1.0.0...v1.0.1) (2026-06-15)
+
+
+### Miscellaneous Chores
+
+* release 1.0.1 ([9cb45bd](https://github.com/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB/commit/9cb45bd2945d9f818433917cf7574cdfeaf8c17e))
+
 ## [1.0.0](https://github.com/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB/compare/v0.1.0...v1.0.0) (2026-06-14)
 
 
