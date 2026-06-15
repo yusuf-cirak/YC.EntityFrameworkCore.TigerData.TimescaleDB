@@ -30,7 +30,7 @@
     <PackageTags>timescaledb;tigerdata;entity-framework-core;efcore;time-series;postgresql;npgsql;hypertable</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageReleaseNotes>Release notes: https://github.com/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB/releases</PackageReleaseNotes>
-    <VersionPrefix>1.0.0</VersionPrefix><!-- x-release-please-version -->
+    <VersionPrefix>1.0.1</VersionPrefix><!-- x-release-please-version -->
   </PropertyGroup>
 
   <PropertyGroup>
