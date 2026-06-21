@@ -22,7 +22,7 @@ jobs:
           target-branch: master
 
       # The steps below run only when a release PR was just merged and a release/tag was created.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: ${{ steps.release.outputs.release_created == 'true' }}
 
       - uses: actions/setup-dotnet@v5
