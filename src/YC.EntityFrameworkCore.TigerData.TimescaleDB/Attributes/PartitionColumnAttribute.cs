@@ -90,6 +90,35 @@ public sealed class SpacePartitionAttribute : Attribute
 }
 
 /// <summary>
+///     Adds a range (secondary) partition dimension on this property's column — a secondary partitioning
+///     that splits each partition into fixed-width interval ranges. Requires a
+///     <see cref="PartitionColumnAttribute" /> on the class.
+/// </summary>
+/// <remarks>
+///     Apply to a <b>different</b> column than the time column. Adding a dimension is applied in place;
+///     removing or changing one rebuilds the table. Equivalent to
+///     <c>HasRangePartition(x =&gt; x.Col, value, unit)</c>.
+/// </remarks>
+[AttributeUsage(AttributeTargets.Property)]
+public sealed class RangePartitionAttribute : Attribute
+{
+    /// <param name="value">Partition-interval value — must be <b>&gt; 0</b>.</param>
+    /// <param name="unit">Calendar unit of <paramref name="value" /> (e.g. <see cref="Every.Day" />).</param>
+    public RangePartitionAttribute(int value, Every unit)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(value, 0);
+        Value = value;
+        Unit = unit;
+    }
+
+    /// <summary>Partition-interval value (&gt; 0).</summary>
+    public int Value { get; }
+
+    /// <summary>Calendar unit of <see cref="Value" />.</summary>
+    public Every Unit { get; }
+}
+
+/// <summary>
 ///     Enables chunk skipping on this property's column (<c>enable_chunk_skipping</c>): TimescaleDB tracks
 ///     each chunk's min/max for the column and skips chunks that can't match a range filter on it.
 /// </summary>

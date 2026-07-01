@@ -23,6 +23,7 @@ public class TimescaleDbAttributeConvention : IEntityTypeAddedConvention
 
         ProcessHypertable(entityTypeBuilder, clrType, properties);
         ProcessSpacePartition(entityTypeBuilder, properties);
+        ProcessRangePartition(entityTypeBuilder, properties);
         ProcessTablespaces(entityTypeBuilder, clrType);
         ProcessChunkSkipping(entityTypeBuilder, properties);
         ProcessColumnstore(entityTypeBuilder, clrType, properties);
@@ -109,6 +110,22 @@ public class TimescaleDbAttributeConvention : IEntityTypeAddedConvention
         }
     }
 
+    private static void ProcessRangePartition(
+        IConventionEntityTypeBuilder builder,
+        PropertyInfo[] properties)
+    {
+        var dimensions = properties
+            .Select(p => (p.Name, Attribute: p.GetCustomAttribute<RangePartitionAttribute>()))
+            .Where(x => x.Attribute is not null)
+            .Select(x => $"{x.Name}:{PgInterval.Format(x.Attribute!.Value, x.Attribute.Unit)}")
+            .ToList();
+
+        if (dimensions.Count > 0)
+        {
+            Set(builder, TimescaleDbAnnotationNames.RangeDimensions, string.Join(", ", dimensions));
+        }
+    }
+
     private static void ProcessTablespaces(IConventionEntityTypeBuilder builder, Type clrType)
     {
         var names = clrType.GetCustomAttributes<TablespaceAttribute>().Select(a => a.Name).ToList();
@@ -144,8 +161,13 @@ public class TimescaleDbAttributeConvention : IEntityTypeAddedConvention
             .Where(x => x.Attribute is not null)
             .OrderBy(x => x.Attribute!.Order)
             .ToList();
+        var sparseIndex = properties
+            .Select(p => (Property: p, Attribute: p.GetCustomAttribute<SparseIndexAttribute>()))
+            .Where(x => x.Attribute is not null)
+            .OrderBy(x => x.Attribute!.Order)
+            .ToList();
 
-        if (columnstore is null && segmentBy.Count == 0 && orderBy.Count == 0)
+        if (columnstore is null && segmentBy.Count == 0 && orderBy.Count == 0 && sparseIndex.Count == 0)
         {
             return;
         }
@@ -162,6 +184,12 @@ public class TimescaleDbAttributeConvention : IEntityTypeAddedConvention
         {
             Set(builder, TimescaleDbAnnotationNames.ColumnstoreOrderBy,
                 string.Join(", ", orderBy.Select(x => FormatOrderBy(x.Property.Name, x.Attribute!))));
+        }
+
+        if (sparseIndex.Count > 0)
+        {
+            Set(builder, TimescaleDbAnnotationNames.ColumnstoreSparseIndex,
+                string.Join(", ", sparseIndex.Select(x => FormatSparseIndex(x.Property.Name, x.Attribute!))));
         }
 
         if (columnstore is null)
@@ -231,6 +259,12 @@ public class TimescaleDbAttributeConvention : IEntityTypeAddedConvention
         };
 
         return segment;
+    }
+
+    private static string FormatSparseIndex(string propertyName, SparseIndexAttribute attribute)
+    {
+        var kind = attribute.Kind == SparseIndexKind.Bloom ? "bloom" : "minmax";
+        return $"{kind}({propertyName})";
     }
 
     private static List<PropertyInfo> Ordered<TAttribute>(PropertyInfo[] properties, Func<TAttribute, int> order)

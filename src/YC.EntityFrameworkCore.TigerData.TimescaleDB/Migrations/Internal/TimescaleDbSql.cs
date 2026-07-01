@@ -79,6 +79,12 @@ public static class TimescaleDbSql
         => $"SELECT add_dimension({Regclass(table, schema)}, by_hash({Literal(column)}, "
             + $"{partitions.ToString(CultureInfo.InvariantCulture)}));";
 
+    // Range (secondary) dimension: an interval for time columns (INTERVAL '7 days'); a plain bigint for
+    // integer-time hypertables. The IntervalOrNumber helper disambiguates by parsing the stored value.
+    public static string AddRangeDimension(string table, string? schema, string column, string interval)
+        => $"SELECT add_dimension({Regclass(table, schema)}, by_range({Literal(column)}, "
+            + $"{IntervalOrNumber(interval)}));";
+
     public static string AttachTablespace(string table, string? schema, string tablespace)
         => $"SELECT attach_tablespace({Literal(tablespace)}, {Regclass(table, schema)}, if_not_attached => true);";
 
@@ -108,7 +114,8 @@ public static class TimescaleDbSql
         string? schema,
         string? segmentBy,
         string? orderBy,
-        string? mergeInterval)
+        string? mergeInterval,
+        string? sparseIndex = null)
     {
         var sb = new StringBuilder()
             .Append("ALTER TABLE ")
@@ -128,6 +135,11 @@ public static class TimescaleDbSql
         if (mergeInterval is not null)
         {
             sb.Append(", timescaledb.compress_chunk_time_interval = ").Append(Literal(mergeInterval));
+        }
+
+        if (sparseIndex is not null)
+        {
+            sb.Append(", timescaledb.sparse_index = ").Append(Literal(sparseIndex));
         }
 
         return sb.Append(");").ToString();
@@ -175,12 +187,12 @@ public static class TimescaleDbSql
     // ---------------------------------------------------------------- policies (table or cagg)
 
     public static string AddRetentionPolicy(
-        string relation, string? schema, string dropAfter,
-        string? scheduleInterval, string? initialStart, string? timezone)
+        string relation, string? schema, string main,
+        string? scheduleInterval, string? initialStart, string? timezone, bool createdBefore = false)
     {
         var sb = new StringBuilder()
-            .Append("SELECT add_retention_policy(").Append(Regclass(relation, schema))
-            .Append(", drop_after => ").Append(IntervalOrNumber(dropAfter));
+            .Append("SELECT add_retention_policy(").Append(Regclass(relation, schema));
+        AppendPolicyMain(sb, "drop_after", "drop_created_before", main, createdBefore);
         AppendInterval(sb, "schedule_interval", scheduleInterval);
         AppendSchedule(sb, initialStart, timezone);
         return sb.Append(");").ToString();
@@ -190,12 +202,12 @@ public static class TimescaleDbSql
         => $"SELECT remove_retention_policy({Regclass(relation, schema)}, if_exists => true);";
 
     public static string AddColumnstorePolicy(
-        string table, string? schema, string after,
-        string? scheduleInterval, string? initialStart, string? timezone)
+        string table, string? schema, string main,
+        string? scheduleInterval, string? initialStart, string? timezone, bool createdBefore = false)
     {
         var sb = new StringBuilder()
-            .Append("CALL add_columnstore_policy(").Append(Regclass(table, schema))
-            .Append(", after => ").Append(IntervalOrNumber(after));
+            .Append("CALL add_columnstore_policy(").Append(Regclass(table, schema));
+        AppendPolicyMain(sb, "after", "created_before", main, createdBefore);
         AppendInterval(sb, "schedule_interval", scheduleInterval);
         AppendSchedule(sb, initialStart, timezone);
         return sb.Append(");").ToString();
@@ -326,6 +338,16 @@ public static class TimescaleDbSql
             + $"WHERE application_name = {Literal(name)} OR application_name LIKE {Literal(name + " [%]")};";
 
     // ---------------------------------------------------------------- helpers
+
+    // The value form (drop_after / after) accepts a raw number on integer-time hypertables; the
+    // creation-time form (drop_created_before / created_before) is keyed on the chunk's creation timestamp
+    // and is therefore always an INTERVAL.
+    private static void AppendPolicyMain(
+        StringBuilder sb, string valueParameter, string createdBeforeParameter, string main, bool createdBefore)
+        => sb.Append(", ")
+            .Append(createdBefore ? createdBeforeParameter : valueParameter)
+            .Append(" => ")
+            .Append(createdBefore ? Interval(main) : IntervalOrNumber(main));
 
     private static void AppendInterval(StringBuilder sb, string parameter, string? value)
     {

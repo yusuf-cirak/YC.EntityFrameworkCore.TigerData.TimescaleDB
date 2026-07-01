@@ -16,6 +16,7 @@ public class TimescaleDbColumnstoreBuilder<TEntity>
     private readonly EntityTypeBuilder _entityTypeBuilder;
     private readonly List<string> _segmentBy = [];
     private readonly List<string> _orderBy = [];
+    private readonly List<string> _sparseIndex = [];
 
     public TimescaleDbColumnstoreBuilder(EntityTypeBuilder entityTypeBuilder)
         => _entityTypeBuilder = entityTypeBuilder;
@@ -72,6 +73,25 @@ public class TimescaleDbColumnstoreBuilder<TEntity>
         return this;
     }
 
+    /// <summary>Adds a <c>minmax</c> sparse index on the column to <c>timescaledb.sparse_index</c>.</summary>
+    public virtual TimescaleDbColumnstoreBuilder<TEntity> SparseIndexMinMax(
+        Expression<Func<TEntity, object?>> property)
+        => AddSparseIndex(property, "minmax");
+
+    /// <summary>Adds a <c>bloom</c> sparse index on the column to <c>timescaledb.sparse_index</c>.</summary>
+    public virtual TimescaleDbColumnstoreBuilder<TEntity> SparseIndexBloom(
+        Expression<Func<TEntity, object?>> property)
+        => AddSparseIndex(property, "bloom");
+
+    private TimescaleDbColumnstoreBuilder<TEntity> AddSparseIndex(
+        Expression<Func<TEntity, object?>> property,
+        string kind)
+    {
+        _sparseIndex.Add($"{kind}({ExpressionHelpers.GetPropertyName(property)})");
+        Apply();
+        return this;
+    }
+
     private TimescaleDbColumnstoreBuilder<TEntity> AddOrderBy(
         Expression<Func<TEntity, object?>> property,
         bool descending,
@@ -108,6 +128,12 @@ public class TimescaleDbColumnstoreBuilder<TEntity>
         {
             _entityTypeBuilder.HasAnnotation(
                 TimescaleDbAnnotationNames.ColumnstoreOrderBy, string.Join(", ", _orderBy));
+        }
+
+        if (_sparseIndex.Count > 0)
+        {
+            _entityTypeBuilder.HasAnnotation(
+                TimescaleDbAnnotationNames.ColumnstoreSparseIndex, string.Join(", ", _sparseIndex));
         }
     }
 }

@@ -113,6 +113,11 @@ public class TimescaleDbMigrationsSqlGenerator : NpgsqlMigrationsSqlGenerator
             Statement(builder, TimescaleDbSql.AddDimension(table, schema, dimension.Column, dimension.Partitions));
         }
 
+        foreach (var dimension in s.RangeDimensions)
+        {
+            Statement(builder, TimescaleDbSql.AddRangeDimension(table, schema, dimension.Column, dimension.Interval));
+        }
+
         if (s.IntegerNowFunction is not null)
         {
             Statement(builder, TimescaleDbSql.SetIntegerNowFunction(table, schema, s.IntegerNowFunction));
@@ -125,7 +130,8 @@ public class TimescaleDbMigrationsSqlGenerator : NpgsqlMigrationsSqlGenerator
 
         if (s.Columnstore)
         {
-            Statement(builder, TimescaleDbSql.SetColumnstore(table, schema, s.SegmentBy, s.OrderBy, s.MergeInterval));
+            Statement(builder, TimescaleDbSql.SetColumnstore(
+                table, schema, s.SegmentBy, s.OrderBy, s.MergeInterval, s.SparseIndex));
         }
 
         foreach (var column in s.ChunkSkipping)
@@ -145,14 +151,15 @@ public class TimescaleDbMigrationsSqlGenerator : NpgsqlMigrationsSqlGenerator
         if (s.Retention.Exists)
         {
             Statement(builder, TimescaleDbSql.AddRetentionPolicy(
-                table, schema, s.Retention.Main!, s.Retention.Schedule, s.Retention.InitialStart, s.Retention.Timezone));
+                table, schema, s.Retention.Main!, s.Retention.Schedule, s.Retention.InitialStart,
+                s.Retention.Timezone, s.Retention.CreatedBefore));
         }
 
         if (s.ColumnstorePolicy.Exists)
         {
             Statement(builder, TimescaleDbSql.AddColumnstorePolicy(
                 table, schema, s.ColumnstorePolicy.Main!, s.ColumnstorePolicy.Schedule,
-                s.ColumnstorePolicy.InitialStart, s.ColumnstorePolicy.Timezone));
+                s.ColumnstorePolicy.InitialStart, s.ColumnstorePolicy.Timezone, s.ColumnstorePolicy.CreatedBefore));
         }
 
         // The reorder policy is emitted by the model differ (after the index is created), not here.
@@ -177,6 +184,13 @@ public class TimescaleDbMigrationsSqlGenerator : NpgsqlMigrationsSqlGenerator
         foreach (var dimension in @new.SpaceDimensions.Where(d => !oldColumns.Contains(d.Column)))
         {
             Statement(builder, TimescaleDbSql.AddDimension(table, schema, dimension.Column, dimension.Partitions));
+        }
+
+        // Range dimensions added (removal / interval change forces a rebuild — see RequiresRebuild).
+        var oldRangeColumns = old.RangeDimensions.Select(d => d.Column).ToHashSet(StringComparer.Ordinal);
+        foreach (var dimension in @new.RangeDimensions.Where(d => !oldRangeColumns.Contains(d.Column)))
+        {
+            Statement(builder, TimescaleDbSql.AddRangeDimension(table, schema, dimension.Column, dimension.Interval));
         }
 
         if (@new.IntegerNowFunction is not null && @new.IntegerNowFunction != old.IntegerNowFunction)
@@ -209,12 +223,14 @@ public class TimescaleDbMigrationsSqlGenerator : NpgsqlMigrationsSqlGenerator
 
         EmitPolicyDiff(
             old.Retention, @new.Retention, builder,
-            add: p => TimescaleDbSql.AddRetentionPolicy(table, schema, p.Main!, p.Schedule, p.InitialStart, p.Timezone),
+            add: p => TimescaleDbSql.AddRetentionPolicy(
+                table, schema, p.Main!, p.Schedule, p.InitialStart, p.Timezone, p.CreatedBefore),
             remove: () => TimescaleDbSql.RemoveRetentionPolicy(table, schema));
 
         EmitPolicyDiff(
             old.ColumnstorePolicy, @new.ColumnstorePolicy, builder,
-            add: p => TimescaleDbSql.AddColumnstorePolicy(table, schema, p.Main!, p.Schedule, p.InitialStart, p.Timezone),
+            add: p => TimescaleDbSql.AddColumnstorePolicy(
+                table, schema, p.Main!, p.Schedule, p.InitialStart, p.Timezone, p.CreatedBefore),
             remove: () => TimescaleDbSql.RemoveColumnstorePolicy(table, schema));
 
         // The reorder policy is emitted by the model differ (it must run after the index exists).
@@ -231,7 +247,7 @@ public class TimescaleDbMigrationsSqlGenerator : NpgsqlMigrationsSqlGenerator
         {
             case (false, true):
                 Statement(builder, TimescaleDbSql.SetColumnstore(
-                    table, schema, @new.SegmentBy, @new.OrderBy, @new.MergeInterval));
+                    table, schema, @new.SegmentBy, @new.OrderBy, @new.MergeInterval, @new.SparseIndex));
                 break;
 
             case (true, false):
@@ -245,7 +261,7 @@ public class TimescaleDbMigrationsSqlGenerator : NpgsqlMigrationsSqlGenerator
 
             case (true, true) when @new.ColumnstoreLayoutDiffers(old):
                 Statement(builder, TimescaleDbSql.SetColumnstore(
-                    table, schema, @new.SegmentBy, @new.OrderBy, @new.MergeInterval));
+                    table, schema, @new.SegmentBy, @new.OrderBy, @new.MergeInterval, @new.SparseIndex));
                 break;
         }
     }
@@ -300,6 +316,17 @@ public class TimescaleDbMigrationsSqlGenerator : NpgsqlMigrationsSqlGenerator
                     return true;
                 }
             }
+
+            // Same rule for range dimensions: an existing one dropped or its interval changed → rebuild.
+            var newRangeByColumn = @new.RangeDimensions.ToDictionary(d => d.Column, d => d.Interval, StringComparer.Ordinal);
+            foreach (var dimension in old.RangeDimensions)
+            {
+                if (!newRangeByColumn.TryGetValue(dimension.Column, out var interval)
+                    || interval != dimension.Interval)
+                {
+                    return true;
+                }
+            }
         }
 
         return false;
@@ -333,6 +360,11 @@ public class TimescaleDbMigrationsSqlGenerator : NpgsqlMigrationsSqlGenerator
                 Statement(builder, TimescaleDbSql.AddDimension(shadow, schema, dimension.Column, dimension.Partitions));
             }
 
+            foreach (var dimension in target.RangeDimensions)
+            {
+                Statement(builder, TimescaleDbSql.AddRangeDimension(shadow, schema, dimension.Column, dimension.Interval));
+            }
+
             if (target.IntegerNowFunction is not null)
             {
                 Statement(builder, TimescaleDbSql.SetIntegerNowFunction(shadow, schema, target.IntegerNowFunction));
@@ -353,7 +385,7 @@ public class TimescaleDbMigrationsSqlGenerator : NpgsqlMigrationsSqlGenerator
             if (target.Columnstore)
             {
                 Statement(builder, TimescaleDbSql.SetColumnstore(
-                    table, schema, target.SegmentBy, target.OrderBy, target.MergeInterval));
+                    table, schema, target.SegmentBy, target.OrderBy, target.MergeInterval, target.SparseIndex));
             }
 
             foreach (var column in target.ChunkSkipping)

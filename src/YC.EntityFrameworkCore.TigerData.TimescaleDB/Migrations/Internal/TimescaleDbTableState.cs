@@ -3,14 +3,25 @@ using YC.EntityFrameworkCore.TigerData.TimescaleDB.Metadata;
 
 namespace YC.EntityFrameworkCore.TigerData.TimescaleDB.Migrations.Internal;
 
-/// <summary>A policy's parameters, read from the table annotations.</summary>
-public sealed record PolicyState(string? Main, string? Schedule, string? InitialStart, string? Timezone)
+/// <summary>
+///     A policy's parameters, read from the table annotations. <paramref name="CreatedBefore" /> discriminates
+///     the creation-time form (<c>drop_created_before</c> / <c>created_before</c>) from the value form
+///     (<c>drop_after</c> / <c>after</c>); in both cases <paramref name="Main" /> carries the interval value.
+/// </summary>
+public sealed record PolicyState(
+    string? Main, string? Schedule, string? InitialStart, string? Timezone, bool CreatedBefore = false)
 {
     public bool Exists => Main is not null;
 }
 
 /// <summary>A hash (space) partition dimension.</summary>
 public sealed record SpaceDimension(string Column, int Partitions);
+
+/// <summary>
+///     A range (secondary) partition dimension. <paramref name="Interval" /> is a PostgreSQL interval
+///     literal (e.g. <c>7 days</c>) for time columns, or a plain bigint for integer-time hypertables.
+/// </summary>
+public sealed record RangeDimension(string Column, string Interval);
 
 /// <summary>
 ///     The TimescaleDB state of a table, read from the annotations EF attaches to a
@@ -23,6 +34,7 @@ public sealed record TimescaleDbTableState(
     string? ChunkInterval,
     bool CreateDefaultIndexes,
     IReadOnlyList<SpaceDimension> SpaceDimensions,
+    IReadOnlyList<RangeDimension> RangeDimensions,
     IReadOnlyList<string> Tablespaces,
     string? IntegerNowFunction,
     string[] ChunkSkipping,
@@ -30,6 +42,7 @@ public sealed record TimescaleDbTableState(
     string? SegmentBy,
     string? OrderBy,
     string? MergeInterval,
+    string? SparseIndex,
     PolicyState Retention,
     PolicyState ColumnstorePolicy,
     string? ReorderIndex,
@@ -57,6 +70,7 @@ public sealed record TimescaleDbTableState(
             CreateDefaultIndexes:
                 source.FindAnnotation(TimescaleDbAnnotationNames.CreateDefaultIndexes)?.Value as bool? ?? true,
             SpaceDimensions: ParseDimensions(S(TimescaleDbAnnotationNames.SpaceDimensions)),
+            RangeDimensions: ParseRangeDimensions(S(TimescaleDbAnnotationNames.RangeDimensions)),
             Tablespaces: S(TimescaleDbAnnotationNames.Tablespaces)
                     ?.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
                 ?? [],
@@ -68,13 +82,16 @@ public sealed record TimescaleDbTableState(
             SegmentBy: S(TimescaleDbAnnotationNames.ColumnstoreSegmentBy),
             OrderBy: S(TimescaleDbAnnotationNames.ColumnstoreOrderBy),
             MergeInterval: S(TimescaleDbAnnotationNames.ColumnstoreChunkMergeInterval),
-            Retention: new PolicyState(
+            SparseIndex: S(TimescaleDbAnnotationNames.ColumnstoreSparseIndex),
+            Retention: ReadPolicy(
                 S(TimescaleDbAnnotationNames.RetentionPolicyDropAfter),
+                S(TimescaleDbAnnotationNames.RetentionPolicyDropCreatedBefore),
                 S(TimescaleDbAnnotationNames.RetentionPolicyScheduleInterval),
                 S(TimescaleDbAnnotationNames.RetentionPolicyInitialStart),
                 S(TimescaleDbAnnotationNames.RetentionPolicyTimezone)),
-            ColumnstorePolicy: new PolicyState(
+            ColumnstorePolicy: ReadPolicy(
                 S(TimescaleDbAnnotationNames.ColumnstorePolicyAfter),
+                S(TimescaleDbAnnotationNames.ColumnstorePolicyCreatedBefore),
                 S(TimescaleDbAnnotationNames.ColumnstorePolicyScheduleInterval),
                 S(TimescaleDbAnnotationNames.ColumnstorePolicyInitialStart),
                 S(TimescaleDbAnnotationNames.ColumnstorePolicyTimezone)),
@@ -86,7 +103,18 @@ public sealed record TimescaleDbTableState(
 
     /// <summary>Columnstore layout changed (segmentby / orderby / merge interval) while staying enabled.</summary>
     public bool ColumnstoreLayoutDiffers(TimescaleDbTableState other)
-        => SegmentBy != other.SegmentBy || OrderBy != other.OrderBy || MergeInterval != other.MergeInterval;
+        => SegmentBy != other.SegmentBy || OrderBy != other.OrderBy || MergeInterval != other.MergeInterval
+            || SparseIndex != other.SparseIndex;
+
+    /// <summary>
+    ///     Builds a <see cref="PolicyState" /> from the value-form and creation-time annotations. When the
+    ///     creation-time annotation is set it wins (the two are mutually exclusive, enforced at model build).
+    /// </summary>
+    private static PolicyState ReadPolicy(
+        string? afterValue, string? createdBefore, string? schedule, string? initialStart, string? timezone)
+        => createdBefore is not null
+            ? new PolicyState(createdBefore, schedule, initialStart, timezone, CreatedBefore: true)
+            : new PolicyState(afterValue, schedule, initialStart, timezone);
 
     private static IReadOnlyList<SpaceDimension> ParseDimensions(string? value)
     {
@@ -102,6 +130,24 @@ public sealed record TimescaleDbTableState(
             result.Add(new SpaceDimension(
                 parts[0].Trim(),
                 int.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture)));
+        }
+
+        return result;
+    }
+
+    private static IReadOnlyList<RangeDimension> ParseRangeDimensions(string? value)
+    {
+        if (value is null)
+        {
+            return [];
+        }
+
+        var result = new List<RangeDimension>();
+        foreach (var item in value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            // Split on the first ':' only — an interval literal may itself contain ':' (e.g. "01:30:00").
+            var parts = item.Split(':', 2);
+            result.Add(new RangeDimension(parts[0].Trim(), parts[1].Trim()));
         }
 
         return result;

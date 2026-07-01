@@ -118,12 +118,12 @@ allowable values. Click through:
 |---|---|
 | [Hypertable](FEATURES.md#hypertable) | Partition a table by time into chunks — the core TimescaleDB primitive. |
 | [Integer-time hypertable](FEATURES.md#integer-time-hypertable) | Partition by an integer column (epoch/sequence) with an integer-now function. |
-| [Space dimensions](FEATURES.md#space-dimensions) | Hash sub-partitioning on one or more extra columns. |
+| [Space dimensions](FEATURES.md#space-dimensions) | Hash (`by_hash`) or range (`by_range`) sub-partitioning on extra columns. |
 | [Tablespaces](FEATURES.md#tablespaces) | Spread chunks across disks/tablespaces, round-robin. |
 | [Chunk skipping](FEATURES.md#chunk-skipping) | Min/max range tracking to prune chunks at query time. |
-| [Columnstore](FEATURES.md#columnstore) | Native compression with segment-by / order-by layout. |
-| [Columnstore policy](FEATURES.md#columnstore-policy) | Auto-compress chunks older than an age. |
-| [Retention policy](FEATURES.md#retention-policy) | Auto-drop chunks older than an age. |
+| [Columnstore](FEATURES.md#columnstore) | Native compression with segment-by / order-by layout and sparse indexes. |
+| [Columnstore policy](FEATURES.md#columnstore-policy) | Auto-compress chunks older than a data age or creation age. |
+| [Retention policy](FEATURES.md#retention-policy) | Auto-drop chunks older than a data age or creation age. |
 | [Reorder policy](FEATURES.md#reorder-policy) | Periodically reorder chunks by an index. |
 | [Continuous aggregates](FEATURES.md#continuous-aggregates) | Incrementally-materialized rollups over a hypertable. |
 | [Refresh policy](FEATURES.md#refresh-policy) | Schedule continuous-aggregate refreshes. |
@@ -157,6 +157,8 @@ every row, drop, rename) so **data is preserved** — nothing is rejected:
 | Chunk interval changed | `set_chunk_time_interval(...)` (future chunks) |
 | Space dimension added | `add_dimension(by_hash(...))` |
 | **Space dimension removed / changed** | **rebuild** |
+| Range dimension added | `add_dimension(by_range(...))` |
+| **Range dimension removed / changed** | **rebuild** |
 | Columnstore enabled | `ALTER TABLE … SET (timescaledb.enable_columnstore, …)` |
 | **Columnstore disabled** | every compressed chunk decompressed, then disabled |
 | segmentby / orderby changed | `ALTER TABLE … SET (...)` (future chunks) |
@@ -172,7 +174,10 @@ per entity or model-wide — see [Migration options](FEATURES.md#migration-optio
 
 `dotnet ef dbcontext scaffold` reverse-engineers hypertables, space dimensions, columnstore settings, retention/
 columnstore/reorder policies, chunk skipping, tablespaces and custom jobs. **Continuous aggregates are not
-reverse-engineered** (materialized views are outside the Npgsql scaffolding surface).
+reverse-engineered** (materialized views are outside the Npgsql scaffolding surface). Columnstore **sparse
+indexes**, **creation-time** retention/columnstore policies (`drop_created_before` / `created_before`) and
+**range (`by_range`) dimensions** are also not yet reverse-engineered from an existing database — configure
+them in the model.
 
 ## Notes and limitations
 

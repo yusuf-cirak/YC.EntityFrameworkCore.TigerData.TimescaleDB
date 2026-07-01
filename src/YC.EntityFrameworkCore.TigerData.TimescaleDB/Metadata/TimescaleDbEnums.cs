@@ -27,3 +27,13 @@ public enum Nulls
     First,
     Last,
 }
+
+/// <summary>Kind of columnstore sparse index maintained per chunk for a column.</summary>
+public enum SparseIndexKind
+{
+    /// <summary>Tracks the per-chunk minimum and maximum (<c>minmax</c>) — best for range filters.</summary>
+    MinMax,
+
+    /// <summary>Maintains a bloom filter (<c>bloom</c>) — best for equality filters on high-cardinality columns.</summary>
+    Bloom,
+}

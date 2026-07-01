@@ -112,6 +112,69 @@ public static class TimescaleDbEntityTypeBuilderExtensions
     }
 
     /// <summary>
+    ///     Adds a range (secondary) partition dimension on the given column, splitting each partition into
+    ///     fixed <paramref name="interval" />-wide ranges. Use for a second time/ordered column; call
+    ///     multiple times to add several dimensions. Adding one is applied in place; removing or changing
+    ///     one rebuilds the table.
+    /// </summary>
+    public static EntityTypeBuilder<TEntity> HasRangePartition<TEntity>(
+        this EntityTypeBuilder<TEntity> entityTypeBuilder,
+        Expression<Func<TEntity, object?>> column,
+        TimeSpan interval)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(entityTypeBuilder);
+        return AppendRangeDimension(entityTypeBuilder, column, PgInterval.Format(interval));
+    }
+
+    /// <summary>
+    ///     Adds a range (secondary) partition dimension whose width is a calendar <c>(value, unit)</c>
+    ///     interval (e.g. <c>1, Every.Month</c>).
+    /// </summary>
+    public static EntityTypeBuilder<TEntity> HasRangePartition<TEntity>(
+        this EntityTypeBuilder<TEntity> entityTypeBuilder,
+        Expression<Func<TEntity, object?>> column,
+        int value,
+        Every unit)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(entityTypeBuilder);
+        return AppendRangeDimension(entityTypeBuilder, column, PgInterval.Format(value, unit));
+    }
+
+    /// <summary>
+    ///     Adds a range (secondary) partition dimension on an integer-time column, splitting it into
+    ///     fixed-width ranges of <paramref name="interval" /> (in the column's own unit).
+    /// </summary>
+    public static EntityTypeBuilder<TEntity> HasRangePartition<TEntity>(
+        this EntityTypeBuilder<TEntity> entityTypeBuilder,
+        Expression<Func<TEntity, object?>> column,
+        long interval)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(entityTypeBuilder);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(interval);
+        return AppendRangeDimension(
+            entityTypeBuilder, column, interval.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    private static EntityTypeBuilder<TEntity> AppendRangeDimension<TEntity>(
+        EntityTypeBuilder<TEntity> entityTypeBuilder,
+        Expression<Func<TEntity, object?>> column,
+        string interval)
+        where TEntity : class
+    {
+        var item = $"{ExpressionHelpers.GetPropertyName(column)}:{interval}";
+        var existing = entityTypeBuilder.Metadata
+            .FindAnnotation(TimescaleDbAnnotationNames.RangeDimensions)?.Value as string;
+
+        entityTypeBuilder.HasAnnotation(
+            TimescaleDbAnnotationNames.RangeDimensions,
+            existing is null ? item : $"{existing}, {item}");
+        return entityTypeBuilder;
+    }
+
+    /// <summary>
     ///     Attaches the hypertable to a tablespace (<c>attach_tablespace</c>). Call multiple times.
     ///     Declare named <see cref="Tablespace" /> instances rather than passing raw strings.
     /// </summary>
@@ -237,19 +300,27 @@ public static class TimescaleDbEntityTypeBuilderExtensions
         return entityTypeBuilder;
     }
 
-    /// <summary>Adds an automatic columnstore conversion policy (<c>add_columnstore_policy</c>).</summary>
+    /// <summary>
+    ///     Adds an automatic columnstore conversion policy (<c>add_columnstore_policy</c>). Specify exactly one of
+    ///     <paramref name="after" /> (value form, <c>after</c>) or <paramref name="createdBefore" /> (creation-time
+    ///     form, <c>created_before</c>); the two are mutually exclusive.
+    /// </summary>
     public static EntityTypeBuilder<TEntity> HasColumnstorePolicy<TEntity>(
         this EntityTypeBuilder<TEntity> entityTypeBuilder,
-        TimeSpan after,
+        TimeSpan? after = null,
         TimeSpan? scheduleInterval = null,
         DateTimeOffset? initialStart = null,
-        string? timezone = null)
+        string? timezone = null,
+        TimeSpan? createdBefore = null)
         where TEntity : class
-        => ApplyColumnstorePolicy(
-            entityTypeBuilder, PgInterval.Format(after),
-            scheduleInterval is { } s ? PgInterval.Format(s) : null, initialStart, timezone);
+    {
+        var (value, isCreatedBefore) = ResolvePolicyValue(after, createdBefore, nameof(after), nameof(createdBefore));
+        return ApplyColumnstorePolicy(
+            entityTypeBuilder, value,
+            scheduleInterval is { } s ? PgInterval.Format(s) : null, initialStart, timezone, isCreatedBefore);
+    }
 
-    /// <inheritdoc cref="HasColumnstorePolicy{TEntity}(EntityTypeBuilder{TEntity}, TimeSpan, TimeSpan?, DateTimeOffset?, string?)" />
+    /// <inheritdoc cref="HasColumnstorePolicy{TEntity}(EntityTypeBuilder{TEntity}, TimeSpan?, TimeSpan?, DateTimeOffset?, string?, TimeSpan?)" />
     public static EntityTypeBuilder<TEntity> HasColumnstorePolicy<TEntity>(
         this EntityTypeBuilder<TEntity> entityTypeBuilder,
         int after,
@@ -276,19 +347,29 @@ public static class TimescaleDbEntityTypeBuilderExtensions
 
     // ---------------------------------------------------------------- retention / reorder
 
-    /// <summary>Adds a data retention policy (hypertable or continuous aggregate).</summary>
+    /// <summary>
+    ///     Adds a data retention policy (hypertable or continuous aggregate). Specify exactly one of
+    ///     <paramref name="dropAfter" /> (value form, <c>drop_after</c>) or <paramref name="dropCreatedBefore" />
+    ///     (creation-time form, <c>drop_created_before</c>); the two are mutually exclusive.
+    ///     <paramref name="dropCreatedBefore" /> is not supported on continuous aggregates.
+    /// </summary>
     public static EntityTypeBuilder<TEntity> HasRetentionPolicy<TEntity>(
         this EntityTypeBuilder<TEntity> entityTypeBuilder,
-        TimeSpan dropAfter,
+        TimeSpan? dropAfter = null,
         TimeSpan? scheduleInterval = null,
         DateTimeOffset? initialStart = null,
-        string? timezone = null)
+        string? timezone = null,
+        TimeSpan? dropCreatedBefore = null)
         where TEntity : class
-        => ApplyRetentionPolicy(
-            entityTypeBuilder, PgInterval.Format(dropAfter),
-            scheduleInterval is { } s ? PgInterval.Format(s) : null, initialStart, timezone);
+    {
+        var (value, createdBefore) =
+            ResolvePolicyValue(dropAfter, dropCreatedBefore, nameof(dropAfter), nameof(dropCreatedBefore));
+        return ApplyRetentionPolicy(
+            entityTypeBuilder, value,
+            scheduleInterval is { } s ? PgInterval.Format(s) : null, initialStart, timezone, createdBefore);
+    }
 
-    /// <inheritdoc cref="HasRetentionPolicy{TEntity}(EntityTypeBuilder{TEntity}, TimeSpan, TimeSpan?, DateTimeOffset?, string?)" />
+    /// <inheritdoc cref="HasRetentionPolicy{TEntity}(EntityTypeBuilder{TEntity}, TimeSpan?, TimeSpan?, DateTimeOffset?, string?, TimeSpan?)" />
     public static EntityTypeBuilder<TEntity> HasRetentionPolicy<TEntity>(
         this EntityTypeBuilder<TEntity> entityTypeBuilder,
         int dropAfter,
@@ -425,12 +506,16 @@ public static class TimescaleDbEntityTypeBuilderExtensions
     }
 
     private static EntityTypeBuilder<TEntity> ApplyColumnstorePolicy<TEntity>(
-        EntityTypeBuilder<TEntity> builder, string after, string? schedule,
-        DateTimeOffset? initialStart, string? timezone)
+        EntityTypeBuilder<TEntity> builder, string main, string? schedule,
+        DateTimeOffset? initialStart, string? timezone, bool createdBefore = false)
         where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(builder);
-        builder.HasAnnotation(TimescaleDbAnnotationNames.ColumnstorePolicyAfter, after);
+        builder.HasAnnotation(
+            createdBefore
+                ? TimescaleDbAnnotationNames.ColumnstorePolicyCreatedBefore
+                : TimescaleDbAnnotationNames.ColumnstorePolicyAfter,
+            main);
         SetIfNotNull(builder, TimescaleDbAnnotationNames.ColumnstorePolicyScheduleInterval, schedule);
         SetIfNotNull(builder, TimescaleDbAnnotationNames.ColumnstorePolicyInitialStart, initialStart?.ToString("O"));
         SetIfNotNull(builder, TimescaleDbAnnotationNames.ColumnstorePolicyTimezone, timezone);
@@ -438,16 +523,47 @@ public static class TimescaleDbEntityTypeBuilderExtensions
     }
 
     private static EntityTypeBuilder<TEntity> ApplyRetentionPolicy<TEntity>(
-        EntityTypeBuilder<TEntity> builder, string dropAfter, string? schedule,
-        DateTimeOffset? initialStart, string? timezone)
+        EntityTypeBuilder<TEntity> builder, string main, string? schedule,
+        DateTimeOffset? initialStart, string? timezone, bool createdBefore = false)
         where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(builder);
-        builder.HasAnnotation(TimescaleDbAnnotationNames.RetentionPolicyDropAfter, dropAfter);
+        builder.HasAnnotation(
+            createdBefore
+                ? TimescaleDbAnnotationNames.RetentionPolicyDropCreatedBefore
+                : TimescaleDbAnnotationNames.RetentionPolicyDropAfter,
+            main);
         SetIfNotNull(builder, TimescaleDbAnnotationNames.RetentionPolicyScheduleInterval, schedule);
         SetIfNotNull(builder, TimescaleDbAnnotationNames.RetentionPolicyInitialStart, initialStart?.ToString("O"));
         SetIfNotNull(builder, TimescaleDbAnnotationNames.RetentionPolicyTimezone, timezone);
         return builder;
+    }
+
+    /// <summary>
+    ///     Resolves a policy's interval value from the mutually-exclusive value / creation-time parameters,
+    ///     formatting it as a PostgreSQL interval and reporting which form was chosen. Exactly one must be set.
+    /// </summary>
+    private static (string Value, bool CreatedBefore) ResolvePolicyValue(
+        TimeSpan? afterValue, TimeSpan? createdBefore, string afterName, string createdBeforeName)
+    {
+        if (afterValue is { } a)
+        {
+            if (createdBefore is not null)
+            {
+                throw new InvalidOperationException(
+                    $"Specify either '{afterName}' or '{createdBeforeName}' for the policy, not both.");
+            }
+
+            return (PgInterval.Format(a), false);
+        }
+
+        if (createdBefore is { } c)
+        {
+            return (PgInterval.Format(c), true);
+        }
+
+        throw new ArgumentException(
+            $"Specify either '{afterName}' or '{createdBeforeName}' for the policy.");
     }
 
     private static EntityTypeBuilder<TEntity> ApplyRefreshPolicy<TEntity>(
