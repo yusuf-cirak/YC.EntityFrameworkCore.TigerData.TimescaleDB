@@ -33,6 +33,8 @@ public class TimescaleDbModelFinalizingConvention : IModelFinalizingConvention
                     "continuous aggregate; these are mutually exclusive.");
             }
 
+            ValidateCreationTimePolicies(entityType, isContinuousAggregate);
+
             if (isHypertable)
             {
                 ProcessHypertable(entityType);
@@ -46,6 +48,49 @@ public class TimescaleDbModelFinalizingConvention : IModelFinalizingConvention
             {
                 ProcessContinuousAggregate(entityType);
             }
+        }
+    }
+
+    // ---------------------------------------------------------------- creation-time policies
+
+    /// <summary>
+    ///     Enforces the creation-time policy rules: the value form (<c>drop_after</c> / <c>after</c>) and the
+    ///     creation-time form (<c>drop_created_before</c> / <c>created_before</c>) are mutually exclusive, and
+    ///     <c>drop_created_before</c> is not supported on continuous aggregates.
+    /// </summary>
+    private static void ValidateCreationTimePolicies(
+        IConventionEntityType entityType,
+        bool isContinuousAggregate)
+    {
+        var hasDropAfter =
+            entityType.FindAnnotation(TimescaleDbAnnotationNames.RetentionPolicyDropAfter) is not null;
+        var hasDropCreatedBefore =
+            entityType.FindAnnotation(TimescaleDbAnnotationNames.RetentionPolicyDropCreatedBefore) is not null;
+
+        if (hasDropAfter && hasDropCreatedBefore)
+        {
+            throw new InvalidOperationException(
+                $"Entity type '{entityType.DisplayName()}' configures a retention policy by both 'dropAfter' and " +
+                "'dropCreatedBefore'; these are mutually exclusive.");
+        }
+
+        if (hasDropCreatedBefore && isContinuousAggregate)
+        {
+            throw new InvalidOperationException(
+                $"Continuous aggregate '{entityType.DisplayName()}' configures a retention policy by " +
+                "'dropCreatedBefore'; TimescaleDB does not support 'drop_created_before' on continuous aggregates.");
+        }
+
+        var hasAfter =
+            entityType.FindAnnotation(TimescaleDbAnnotationNames.ColumnstorePolicyAfter) is not null;
+        var hasCreatedBefore =
+            entityType.FindAnnotation(TimescaleDbAnnotationNames.ColumnstorePolicyCreatedBefore) is not null;
+
+        if (hasAfter && hasCreatedBefore)
+        {
+            throw new InvalidOperationException(
+                $"Entity type '{entityType.DisplayName()}' configures a columnstore policy by both 'after' and " +
+                "'createdBefore'; these are mutually exclusive.");
         }
     }
 
@@ -103,6 +148,30 @@ public class TimescaleDbModelFinalizingConvention : IModelFinalizingConvention
             entityType.SetAnnotation(TimescaleDbAnnotationNames.SpaceDimensions, canonical);
         }
 
+        // Range dimensions: canonicalize each column name; the interval literal is kept verbatim.
+        if (entityType.FindAnnotation(TimescaleDbAnnotationNames.RangeDimensions)?.Value is string rangeDimensions)
+        {
+            var store = storeObject;
+            var canonical = string.Join(", ", rangeDimensions
+                .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                .Select(item =>
+                {
+                    // Split on the first ':' only — an interval literal may contain ':' (e.g. "01:30:00").
+                    var parts = item.Split(':', 2);
+                    if (parts.Length != 2 || string.IsNullOrWhiteSpace(parts[1]))
+                    {
+                        throw new InvalidOperationException(
+                            $"The range dimension '{item}' of hypertable '{entityType.DisplayName()}' must specify " +
+                            "a partition interval.");
+                    }
+
+                    var column = GetColumnName(ResolveProperty(entityType, parts[0], store), store, entityType);
+                    return $"{column}:{parts[1].Trim()}";
+                }));
+
+            entityType.SetAnnotation(TimescaleDbAnnotationNames.RangeDimensions, canonical);
+        }
+
         // Chunk skipping: canonicalize column list.
         if (entityType.FindAnnotation(TimescaleDbAnnotationNames.ChunkSkippingColumns)?.Value is string skipColumns)
         {
@@ -121,7 +190,8 @@ public class TimescaleDbModelFinalizingConvention : IModelFinalizingConvention
     {
         if (entityType.FindAnnotation(TimescaleDbAnnotationNames.ColumnstoreEnabled)?.Value is not true)
         {
-            if (entityType.FindAnnotation(TimescaleDbAnnotationNames.ColumnstorePolicyAfter) is not null)
+            if (entityType.FindAnnotation(TimescaleDbAnnotationNames.ColumnstorePolicyAfter) is not null
+                || entityType.FindAnnotation(TimescaleDbAnnotationNames.ColumnstorePolicyCreatedBefore) is not null)
             {
                 throw new InvalidOperationException(
                     $"Entity type '{entityType.DisplayName()}' has a columnstore policy but columnstore is not " +
@@ -146,6 +216,16 @@ public class TimescaleDbModelFinalizingConvention : IModelFinalizingConvention
                 string.Join(", ", orderBy
                     .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
                     .Select(segment => CanonicalizeOrderBySegment(segment, entityType, store))));
+        }
+
+        if (entityType.FindAnnotation(TimescaleDbAnnotationNames.ColumnstoreSparseIndex)?.Value is string sparseIndex)
+        {
+            var store = storeObject;
+            entityType.SetAnnotation(
+                TimescaleDbAnnotationNames.ColumnstoreSparseIndex,
+                string.Join(", ", sparseIndex
+                    .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                    .Select(entry => CanonicalizeSparseIndexEntry(entry, entityType, store))));
         }
     }
 
@@ -236,6 +316,7 @@ public class TimescaleDbModelFinalizingConvention : IModelFinalizingConvention
         var hypertableOnly = new List<(string Annotation, string Feature)>
         {
             (TimescaleDbAnnotationNames.SpaceDimensions, "space partition"),
+            (TimescaleDbAnnotationNames.RangeDimensions, "range partition"),
             (TimescaleDbAnnotationNames.Tablespaces, "tablespace"),
             (TimescaleDbAnnotationNames.ReorderPolicyIndex, "reorder policy"),
             (TimescaleDbAnnotationNames.ReorderPolicyIndexProperties, "reorder policy"),
@@ -248,6 +329,7 @@ public class TimescaleDbModelFinalizingConvention : IModelFinalizingConvention
             // Continuous aggregates may use the columnstore; plain tables may not.
             hypertableOnly.Add((TimescaleDbAnnotationNames.ColumnstoreEnabled, "columnstore"));
             hypertableOnly.Add((TimescaleDbAnnotationNames.ColumnstorePolicyAfter, "columnstore policy"));
+            hypertableOnly.Add((TimescaleDbAnnotationNames.ColumnstorePolicyCreatedBefore, "columnstore policy"));
         }
 
         foreach (var (annotation, feature) in hypertableOnly)
@@ -261,7 +343,8 @@ public class TimescaleDbModelFinalizingConvention : IModelFinalizingConvention
         }
 
         if (!isContinuousAggregate
-            && entityType.FindAnnotation(TimescaleDbAnnotationNames.RetentionPolicyDropAfter) is not null)
+            && (entityType.FindAnnotation(TimescaleDbAnnotationNames.RetentionPolicyDropAfter) is not null
+                || entityType.FindAnnotation(TimescaleDbAnnotationNames.RetentionPolicyDropCreatedBefore) is not null))
         {
             throw new InvalidOperationException(
                 $"Entity type '{entityType.DisplayName()}' has a retention policy but is neither a hypertable nor " +
@@ -410,5 +493,33 @@ public class TimescaleDbModelFinalizingConvention : IModelFinalizingConvention
 
         var column = GetColumnName(ResolveProperty(entityType, parts[0], storeObject), storeObject, entityType);
         return parts.Length > 1 ? $"{column} {string.Join(' ', parts[1..])}" : column;
+    }
+
+    private static string CanonicalizeSparseIndexEntry(
+        string entry,
+        IConventionEntityType entityType,
+        in StoreObjectIdentifier storeObject)
+    {
+        var open = entry.IndexOf('(');
+        var close = entry.LastIndexOf(')');
+
+        if (open <= 0 || close != entry.Length - 1)
+        {
+            throw new InvalidOperationException(
+                $"Malformed columnstore sparse index entry '{entry}' on '{entityType.DisplayName()}'; " +
+                "expected 'minmax(column)' or 'bloom(column)'.");
+        }
+
+        var kind = entry[..open].Trim().ToLowerInvariant();
+        if (kind is not ("minmax" or "bloom"))
+        {
+            throw new InvalidOperationException(
+                $"Unknown columnstore sparse index kind '{kind}' on '{entityType.DisplayName()}'; " +
+                "allowed: minmax, bloom.");
+        }
+
+        var reference = entry[(open + 1)..close].Trim();
+        var column = GetColumnName(ResolveProperty(entityType, reference, storeObject), storeObject, entityType);
+        return $"{kind}(\"{column}\")";
     }
 }

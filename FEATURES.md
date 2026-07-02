@@ -195,6 +195,25 @@ Attribute form (one attribute per column):
 the table (data preserved). Beyond write parallelism, equality filters on a space dimension also benefit
 from [automatic chunk exclusion](#hypertable) — querying `WHERE device_id = 'd1'` prunes chunks.
 
+**Range sub-partitioning.** A secondary **range** dimension (`by_range`) partitions an extra column into
+fixed-width intervals, the way the time dimension partitions time. Use `HasRangePartition`:
+
+```csharp
+e.HasRangePartition(x => x.Region, TimeSpan.FromDays(7));   // range dimension on Region
+// e.HasRangePartition(x => x.Region, 7, Every.Day);        // equivalent (calendar) form
+```
+
+Attribute form:
+
+```csharp
+[RangePartition(7, Every.Day)] public string Region { get; set; } = null!;
+```
+
+This emits `add_dimension(by_range('region', INTERVAL '7 days'))`; a `long`-interval overload is available
+for integer-time columns. Exactly like a hash dimension, adding a range dimension applies **in place** via
+`add_dimension`, while **removing or changing** an existing range dimension rebuilds the table (data
+preserved).
+
 ## Tablespaces
 
 **What it is:** placement of a hypertable's chunks across one or more pre-existing PostgreSQL
@@ -333,6 +352,30 @@ A column must not be in both `segmentby` and `orderby`.
 | `OrderBy(..., nulls)` | `Nulls.Default` (PG default: NULLS LAST asc / NULLS FIRST desc) | `Nulls.Default` / `First` / `Last` |
 | `[OrderBy(order, direction, nulls)]` | `order` 0, `Sort.Ascending`, `Nulls.Default` | `Sort.Ascending` / `Descending` |
 
+**Sparse indexes** add per-batch metadata on the columnstore so individual compressed batches can be
+skipped at query time. `minmax` tracks a column's min/max to accelerate **range** filters; `bloom` stores
+a Bloom filter to accelerate **equality** filters on non-`segmentby` columns. Add them alongside the rest
+of the columnstore layout:
+
+```csharp
+e.HasColumnstore(cs => cs
+    .SegmentBy(x => x.DeviceId)
+    .OrderByDescending(x => x.Time)
+    .SparseIndexMinMax(x => x.Value)     // speed up range filters on Value
+    .SparseIndexBloom(x => x.Region));   // speed up equality filters on Region
+```
+
+Attribute form — one marker per property:
+
+```csharp
+[SparseIndex(SparseIndexKind.MinMax)] public double Value { get; set; }
+[SparseIndex(SparseIndexKind.Bloom)]  public string Region { get; set; } = null!;
+```
+
+Both forms fold the index list into the columnstore `SET`, e.g.
+`timescaledb.sparse_index = 'minmax("value"), bloom("region")'`. Sparse indexes only apply to
+**compressed** chunks, and only to a **hypertable** columnstore — not a continuous-aggregate columnstore.
+
 ## Columnstore policy
 
 **What it is:** a background job that **automatically converts chunks to the columnstore** once they are
@@ -362,13 +405,25 @@ public class Reading { /* ... [SegmentBy] / [OrderBy] ... */ }
 
 | Parameter | Default | Allowable |
 |---|---|---|
-| `after` / `CompressAfter` | none — required to add a policy (`0` = no policy) | `TimeSpan`, `(int, Every)`, or `long` (integer-time) |
+| `after` / `CompressAfter` | none — required to add a policy (`0` = no policy); mutually exclusive with `createdBefore` | `TimeSpan`, `(int, Every)`, or `long` (integer-time) |
+| `createdBefore` | none — mutually exclusive with `after` | `TimeSpan` |
 | `scheduleInterval` | TimescaleDB default | `TimeSpan` / `(int, Every)` |
 | `initialStart` | none | `DateTimeOffset` |
 | `timezone` | none | IANA tz id (e.g. `"Europe/Istanbul"`) |
 
 Enabling the columnstore auto-creates a default conversion policy; `HasColumnstorePolicy` replaces it
 deterministically.
+
+**Creation-time policy.** Compress chunks by how long ago they were **created** rather than by their data
+age with `createdBefore` — useful when ingestion time, not the timestamp inside the data, is what you want
+to age on:
+
+```csharp
+e.HasColumnstorePolicy(createdBefore: TimeSpan.FromDays(7));
+```
+
+This emits `add_columnstore_policy(..., created_before => INTERVAL '7 days')`. `createdBefore` and `after`
+are **mutually exclusive** — supplying both throws.
 
 ## Retention policy
 
@@ -398,9 +453,22 @@ public class Reading { /* ... */ }
 
 | Parameter | Default | Allowable |
 |---|---|---|
-| `dropAfter` / `DropAfter` | required, **> 0** | `TimeSpan`, `(int, Every)`, or `long` (integer-time) |
+| `dropAfter` / `DropAfter` | **> 0**; mutually exclusive with `dropCreatedBefore` | `TimeSpan`, `(int, Every)`, or `long` (integer-time) |
+| `dropCreatedBefore` | none — mutually exclusive with `dropAfter` | `TimeSpan` or `(int, Every)` |
 | `scheduleInterval` / `ScheduleInterval` | **1 day** | `TimeSpan` / `(int, Every)` |
 | `initialStart`, `timezone` | none | `DateTimeOffset`, IANA tz id |
+
+**Creation-time retention.** Drop chunks by how long ago they were **created** rather than by their data
+age with `dropCreatedBefore`:
+
+```csharp
+e.HasRetentionPolicy(dropCreatedBefore: TimeSpan.FromDays(180));
+// e.HasRetentionPolicy(dropCreatedBefore: 180, unit: Every.Day);  // equivalent (calendar) form
+```
+
+This emits `add_retention_policy(..., drop_created_before => INTERVAL '180 days')`. `dropCreatedBefore` and
+`dropAfter` are **mutually exclusive** (supplying both throws), and creation-time retention is **not**
+supported on continuous aggregates.
 
 ## Reorder policy
 

@@ -17,6 +17,9 @@ public static class TimescaleDbAnnotationNames
 
     /// <summary>Ordered <c>column:partitions</c> list of hash (space) dimensions, e.g. <c>"device_id:4, region:8"</c>.</summary>
     public const string SpaceDimensions = Prefix + "Hypertable:SpaceDimensions";
+
+    /// <summary>Ordered <c>column:interval</c> list of range (secondary) dimensions, e.g. <c>"region:7 days, shard:1000000"</c>.</summary>
+    public const string RangeDimensions = Prefix + "Hypertable:RangeDimensions";
     public const string IntegerNowFunction = Prefix + "Hypertable:IntegerNowFunction";
     public const string ChunkSkippingColumns = Prefix + "Hypertable:ChunkSkippingColumns";
 
@@ -29,12 +32,21 @@ public static class TimescaleDbAnnotationNames
     public const string ColumnstoreOrderBy = Prefix + "Columnstore:OrderBy";
     public const string ColumnstoreChunkMergeInterval = Prefix + "Columnstore:ChunkMergeInterval";
 
+    /// <summary>Comma-joined <c>minmax(col)</c> / <c>bloom(col)</c> list for <c>timescaledb.sparse_index</c>.</summary>
+    public const string ColumnstoreSparseIndex = Prefix + "Columnstore:SparseIndex";
+
     // Policies (entity type)
     public const string ColumnstorePolicyAfter = Prefix + "ColumnstorePolicy:After";
+
+    /// <summary>Creation-time columnstore policy (<c>created_before</c>); mutually exclusive with <see cref="ColumnstorePolicyAfter" />.</summary>
+    public const string ColumnstorePolicyCreatedBefore = Prefix + "ColumnstorePolicy:CreatedBefore";
     public const string ColumnstorePolicyScheduleInterval = Prefix + "ColumnstorePolicy:ScheduleInterval";
     public const string ColumnstorePolicyInitialStart = Prefix + "ColumnstorePolicy:InitialStart";
     public const string ColumnstorePolicyTimezone = Prefix + "ColumnstorePolicy:Timezone";
     public const string RetentionPolicyDropAfter = Prefix + "RetentionPolicy:DropAfter";
+
+    /// <summary>Creation-time retention policy (<c>drop_created_before</c>); mutually exclusive with <see cref="RetentionPolicyDropAfter" />. Not supported on continuous aggregates.</summary>
+    public const string RetentionPolicyDropCreatedBefore = Prefix + "RetentionPolicy:DropCreatedBefore";
     public const string RetentionPolicyScheduleInterval = Prefix + "RetentionPolicy:ScheduleInterval";
     public const string RetentionPolicyInitialStart = Prefix + "RetentionPolicy:InitialStart";
     public const string RetentionPolicyTimezone = Prefix + "RetentionPolicy:Timezone";
@@ -74,6 +86,7 @@ public static class TimescaleDbAnnotationNames
         ChunkInterval,
         CreateDefaultIndexes,
         SpaceDimensions,
+        RangeDimensions,
         IntegerNowFunction,
         ChunkSkippingColumns,
         Tablespaces,
@@ -81,11 +94,14 @@ public static class TimescaleDbAnnotationNames
         ColumnstoreSegmentBy,
         ColumnstoreOrderBy,
         ColumnstoreChunkMergeInterval,
+        ColumnstoreSparseIndex,
         ColumnstorePolicyAfter,
+        ColumnstorePolicyCreatedBefore,
         ColumnstorePolicyScheduleInterval,
         ColumnstorePolicyInitialStart,
         ColumnstorePolicyTimezone,
         RetentionPolicyDropAfter,
+        RetentionPolicyDropCreatedBefore,
         RetentionPolicyScheduleInterval,
         RetentionPolicyInitialStart,
         RetentionPolicyTimezone,

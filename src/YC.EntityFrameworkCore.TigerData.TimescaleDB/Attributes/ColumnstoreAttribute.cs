@@ -72,6 +72,38 @@ public sealed class SegmentByAttribute : Attribute
 }
 
 /// <summary>
+///     Adds a per-chunk sparse index on this property's column to the columnstore
+///     (<c>timescaledb.sparse_index</c>). Adding it (or <see cref="SegmentByAttribute" /> /
+///     <see cref="OrderByAttribute" />) to any property enables the columnstore.
+/// </summary>
+/// <remarks>
+///     Use <see cref="SparseIndexKind.MinMax" /> for columns you range-filter and
+///     <see cref="SparseIndexKind.Bloom" /> for equality filters on high-cardinality columns. A sparse
+///     index only speeds up <b>compressed</b> chunks. Equivalent to the Fluent
+///     <c>HasColumnstore(cs =&gt; cs.SparseIndexMinMax(x =&gt; x.Col))</c> / <c>SparseIndexBloom(...)</c>.
+/// </remarks>
+[AttributeUsage(AttributeTargets.Property)]
+public sealed class SparseIndexAttribute : Attribute
+{
+    /// <param name="kind">The sparse index kind (<c>minmax</c> or <c>bloom</c>).</param>
+    /// <param name="order">
+    ///     Position among the sparse index columns (0-based). Use distinct values to make the order
+    ///     deterministic when several properties are marked. Default <c>0</c>.
+    /// </param>
+    public SparseIndexAttribute(SparseIndexKind kind, int order = 0)
+    {
+        Kind = kind;
+        Order = order;
+    }
+
+    /// <summary>The sparse index kind.</summary>
+    public SparseIndexKind Kind { get; }
+
+    /// <summary>Position among the sparse index columns (0-based).</summary>
+    public int Order { get; }
+}
+
+/// <summary>
 ///     Includes this property's column in the columnstore <c>orderby</c> list (the order rows are sorted
 ///     within a compressed chunk). Adding it (or <see cref="SegmentByAttribute" />) to any property
 ///     enables the columnstore.

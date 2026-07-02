@@ -311,17 +311,49 @@ public class TimescaleDbMigrationsModelDiffer : MigrationsModelDiffer
             remove: () => TimescaleDbSql.RemoveRetentionPolicy(view, schema),
             post);
 
-        DiffPolicy(
-            source, target,
-            [
-                TimescaleDbAnnotationNames.ColumnstorePolicyAfter,
-                TimescaleDbAnnotationNames.ColumnstorePolicyScheduleInterval,
-                TimescaleDbAnnotationNames.ColumnstorePolicyInitialStart,
-                TimescaleDbAnnotationNames.ColumnstorePolicyTimezone,
-            ],
-            add: v => TimescaleDbSql.AddColumnstorePolicy(view, schema, v[0]!, v[1], v[2], v[3]),
-            remove: () => TimescaleDbSql.RemoveColumnstorePolicy(view, schema),
-            post);
+        // The columnstore policy supports the creation-time form (created_before) on continuous aggregates, so
+        // it is diffed with a discriminator rather than the fixed-slot DiffPolicy. (The retention policy above
+        // cannot: drop_created_before is rejected on continuous aggregates at model build.)
+        DiffColumnstorePolicy(source, target, view, schema, post);
+    }
+
+    private static void DiffColumnstorePolicy(
+        IEntityType? source,
+        IEntityType target,
+        string view,
+        string? schema,
+        List<MigrationOperation> post)
+    {
+        string?[] Read(IEntityType? entity) =>
+        [
+            A(entity, TimescaleDbAnnotationNames.ColumnstorePolicyAfter),
+            A(entity, TimescaleDbAnnotationNames.ColumnstorePolicyCreatedBefore),
+            A(entity, TimescaleDbAnnotationNames.ColumnstorePolicyScheduleInterval),
+            A(entity, TimescaleDbAnnotationNames.ColumnstorePolicyInitialStart),
+            A(entity, TimescaleDbAnnotationNames.ColumnstorePolicyTimezone),
+        ];
+
+        var oldValues = Read(source);
+        var newValues = Read(target);
+        if (oldValues.SequenceEqual(newValues))
+        {
+            return;
+        }
+
+        static bool Exists(string?[] v) => v[0] is not null || v[1] is not null;
+
+        if (Exists(oldValues))
+        {
+            post.Add(Sql(TimescaleDbSql.RemoveColumnstorePolicy(view, schema)));
+        }
+
+        if (Exists(newValues))
+        {
+            var createdBefore = newValues[1] is not null;
+            post.Add(Sql(TimescaleDbSql.AddColumnstorePolicy(
+                view, schema, (createdBefore ? newValues[1] : newValues[0])!,
+                newValues[2], newValues[3], newValues[4], createdBefore)));
+        }
     }
 
     private static void DiffPolicy(

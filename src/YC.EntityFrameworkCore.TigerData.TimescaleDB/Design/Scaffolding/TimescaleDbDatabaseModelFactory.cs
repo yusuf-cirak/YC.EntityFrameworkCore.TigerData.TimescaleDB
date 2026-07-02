@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -113,7 +114,8 @@ public class TimescaleDbDatabaseModelFactory : IDatabaseModelFactory
         command.CommandText =
             """
             SELECT d.hypertable_schema, d.hypertable_name, d.column_name, d.dimension_type,
-                   d.time_interval::text, d.integer_interval, d.num_partitions, d.integer_now_func
+                   d.time_interval::text, d.integer_interval, d.num_partitions, d.integer_now_func,
+                   d.dimension_number
             FROM timescaledb_information.dimensions d
             ORDER BY d.hypertable_schema, d.hypertable_name, d.dimension_number
             """;
@@ -129,16 +131,20 @@ public class TimescaleDbDatabaseModelFactory : IDatabaseModelFactory
 
             var column = reader.GetString(2);
             var dimensionType = reader.GetString(3);
+            var dimensionNumber = reader.GetInt32(8);
 
-            if (string.Equals(dimensionType, "Time", StringComparison.OrdinalIgnoreCase))
+            // Reconstruct the range interval literal from the interval (time) or integer form.
+            string? Interval() => reader.IsDBNull(4)
+                ? reader.IsDBNull(5) ? null : reader.GetInt64(5).ToString(CultureInfo.InvariantCulture)
+                : reader.GetString(4);
+
+            if (dimensionNumber == 1)
             {
+                // The primary partitioning column is always dimension 1 and always range/time based.
                 table[TimescaleDbAnnotationNames.IsHypertable] = true;
                 table[TimescaleDbAnnotationNames.PartitionColumn] = column;
 
-                var interval = reader.IsDBNull(4)
-                    ? reader.IsDBNull(5) ? null : reader.GetInt64(5).ToString()
-                    : reader.GetString(4);
-                if (interval is not null)
+                if (Interval() is { } interval)
                 {
                     table[TimescaleDbAnnotationNames.ChunkInterval] = interval;
                 }
@@ -148,8 +154,21 @@ public class TimescaleDbDatabaseModelFactory : IDatabaseModelFactory
                     table[TimescaleDbAnnotationNames.IntegerNowFunction] = reader.GetString(7);
                 }
             }
+            else if (string.Equals(dimensionType, "Time", StringComparison.OrdinalIgnoreCase))
+            {
+                // A secondary range (by_range) dimension: carries an interval, not a partition count.
+                if (Interval() is { } interval)
+                {
+                    var item = $"{column}:{interval}";
+                    table[TimescaleDbAnnotationNames.RangeDimensions] =
+                        table[TimescaleDbAnnotationNames.RangeDimensions] is string existing
+                            ? $"{existing}, {item}"
+                            : item;
+                }
+            }
             else if (!reader.IsDBNull(6))
             {
+                // A secondary hash (by_hash) dimension: carries a partition count.
                 var item = $"{column}:{(int)reader.GetInt16(6)}";
                 table[TimescaleDbAnnotationNames.SpaceDimensions] =
                     table[TimescaleDbAnnotationNames.SpaceDimensions] is string existing
@@ -164,7 +183,7 @@ public class TimescaleDbDatabaseModelFactory : IDatabaseModelFactory
         using var command = connection.CreateCommand();
         command.CommandText =
             """
-            SELECT n.nspname, c.relname, s.segmentby, s.orderby
+            SELECT n.nspname, c.relname, s.segmentby, s.orderby, s.index::text
             FROM timescaledb_information.hypertable_columnstore_settings s
             JOIN pg_class c ON c.oid = s.hypertable
             JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -192,12 +211,54 @@ public class TimescaleDbDatabaseModelFactory : IDatabaseModelFactory
                 {
                     table[TimescaleDbAnnotationNames.ColumnstoreOrderBy] = reader.GetString(3);
                 }
+
+                if (!reader.IsDBNull(4) && ReadSparseIndex(reader.GetString(4)) is { } sparseIndex)
+                {
+                    table[TimescaleDbAnnotationNames.ColumnstoreSparseIndex] = sparseIndex;
+                }
             }
         }
-        catch (PostgresException e) when (e.SqlState == PostgresErrorCodes.UndefinedTable)
+        catch (PostgresException e)
+            when (e.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.UndefinedColumn)
         {
-            // Older TimescaleDB without the columnstore view; compression settings are skipped.
+            // Older TimescaleDB without the columnstore view/index column; those settings are skipped.
         }
+    }
+
+    /// <summary>
+    ///     Reconstructs the <c>Columnstore:SparseIndex</c> annotation from the <c>index</c> jsonb of
+    ///     <c>hypertable_columnstore_settings</c>. Only explicitly-configured entries
+    ///     (<c>"source": "config"</c>) are emitted; the <c>minmax</c>/<c>firstlast</c> indexes that
+    ///     TimescaleDB derives from the orderby are excluded. Each entry becomes <c>kind("column")</c>,
+    ///     matching the canonical form the model finalizing convention stores.
+    /// </summary>
+    private static string? ReadSparseIndex(string indexJson)
+    {
+        using var document = JsonDocument.Parse(indexJson);
+        if (document.RootElement.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var entries = new List<string>();
+        foreach (var element in document.RootElement.EnumerateArray())
+        {
+            if (element.ValueKind != JsonValueKind.Object
+                || !element.TryGetProperty("source", out var source)
+                || source.ValueKind != JsonValueKind.String
+                || source.GetString() != "config"
+                || !element.TryGetProperty("type", out var type)
+                || type.ValueKind != JsonValueKind.String
+                || !element.TryGetProperty("column", out var col)
+                || col.ValueKind != JsonValueKind.String)
+            {
+                continue;
+            }
+
+            entries.Add($"{type.GetString()}(\"{col.GetString()}\")");
+        }
+
+        return entries.Count > 0 ? string.Join(", ", entries) : null;
     }
 
     private static void EnrichPoliciesAndJobs(DatabaseModel model, DbConnection connection)
@@ -229,7 +290,16 @@ public class TimescaleDbDatabaseModelFactory : IDatabaseModelFactory
             switch (procName)
             {
                 case "policy_retention" when table is not null:
-                    if (TryGetConfigString(config, "drop_after") is { } dropAfter)
+                    // Creation-time form (drop_created_before) and value form (drop_after) are mutually exclusive.
+                    if (TryGetConfigString(config, "drop_created_before") is { } dropCreatedBefore)
+                    {
+                        table[TimescaleDbAnnotationNames.RetentionPolicyDropCreatedBefore] = dropCreatedBefore;
+                        if (scheduleInterval is not null)
+                        {
+                            table[TimescaleDbAnnotationNames.RetentionPolicyScheduleInterval] = scheduleInterval;
+                        }
+                    }
+                    else if (TryGetConfigString(config, "drop_after") is { } dropAfter)
                     {
                         table[TimescaleDbAnnotationNames.RetentionPolicyDropAfter] = dropAfter;
                         if (scheduleInterval is not null)
@@ -241,9 +311,20 @@ public class TimescaleDbDatabaseModelFactory : IDatabaseModelFactory
                     break;
 
                 case "policy_compression" or "policy_columnstore" when table is not null:
+                    // Creation-time form (compress_created_before) and value form (compress_after) are exclusive.
+                    var createdBefore = TryGetConfigString(config, "compress_created_before")
+                        ?? TryGetConfigString(config, "created_before");
                     var after = TryGetConfigString(config, "compress_after")
                         ?? TryGetConfigString(config, "after");
-                    if (after is not null)
+                    if (createdBefore is not null)
+                    {
+                        table[TimescaleDbAnnotationNames.ColumnstorePolicyCreatedBefore] = createdBefore;
+                        if (scheduleInterval is not null)
+                        {
+                            table[TimescaleDbAnnotationNames.ColumnstorePolicyScheduleInterval] = scheduleInterval;
+                        }
+                    }
+                    else if (after is not null)
                     {
                         table[TimescaleDbAnnotationNames.ColumnstorePolicyAfter] = after;
                         if (scheduleInterval is not null)
