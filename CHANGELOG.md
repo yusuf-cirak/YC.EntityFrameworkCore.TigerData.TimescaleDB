@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB/compare/v1.0.1...v1.1.0) (2026-07-02)
+
+
+### Features
+
+* add sparse indexes, creation-time policies, and by_range dimensions ([#11](https://github.com/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB/issues/11)) ([ed91495](https://github.com/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB/commit/ed91495c5e4e657c6f87d680159087644ed02655))
+
 ## [1.0.1](https://github.com/yusuf-cirak/YC.EntityFrameworkCore.TigerData.TimescaleDB/compare/v1.0.0...v1.0.1) (2026-06-15)
 
 
